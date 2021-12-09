@@ -75,21 +75,19 @@ model(Region) ->
         'IN865' -> ?COMMON_DUTY;
         'KR920' -> ?COMMON_DUTY;
         'US915' -> ?US_DWELL_TIME;
-
         %% NOTE: Starting with poc-v11 the Regions are tagged
         %% And we don't support region_cn779
         'region_as923_1' -> ?COMMON_DUTY;
         'region_as923_2' -> ?COMMON_DUTY;
         'region_as923_3' -> ?COMMON_DUTY;
         'region_as923_4' -> ?COMMON_DUTY;
-        'region_au915'   -> ?COMMON_DUTY;
-        'region_cn470'   -> ?COMMON_DUTY;
-        'region_eu433'   -> ?COMMON_DUTY;
-        'region_eu868'   -> ?COMMON_DUTY;
-        'region_in865'   -> ?COMMON_DUTY;
-        'region_kr920'   -> ?COMMON_DUTY;
-        'region_us915'   -> ?US_DWELL_TIME;
-
+        'region_au915' -> ?COMMON_DUTY;
+        'region_cn470' -> ?COMMON_DUTY;
+        'region_eu433' -> ?COMMON_DUTY;
+        'region_eu868' -> ?COMMON_DUTY;
+        'region_in865' -> ?COMMON_DUTY;
+        'region_kr920' -> ?COMMON_DUTY;
+        'region_us915' -> ?US_DWELL_TIME;
         %% We can't support regions we are not aware of.
         _ -> unsupported
     end.
@@ -153,12 +151,13 @@ track_sent({Region, SentPackets}, SentAt, Frequency, TimeOnAir) ->
     {Region, trim_sent(Region, [NewSent | SentPackets])}.
 
 -spec trim_sent(regulatory_model(), list(#sent_packet{})) -> list(#sent_packet{}).
-trim_sent(Model, SentPackets = [NewSent, LastSent | _])
-        when NewSent#sent_packet.sent_at < LastSent#sent_packet.sent_at ->
-    trim_sent(Model, lists:sort(fun (A, B) -> A > B end, SentPackets));
+trim_sent(Model, SentPackets = [NewSent, LastSent | _]) when
+    NewSent#sent_packet.sent_at < LastSent#sent_packet.sent_at
+->
+    trim_sent(Model, lists:sort(fun(A, B) -> A > B end, SentPackets));
 trim_sent({_, _, Period}, SentPackets = [H | _]) ->
     CutoffTime = H#sent_packet.sent_at - Period,
-    Pred = fun (Sent) -> Sent#sent_packet.sent_at > CutoffTime end,
+    Pred = fun(Sent) -> Sent#sent_packet.sent_at > CutoffTime end,
     lists:takewhile(Pred, SentPackets).
 
 %% @doc Based on previously sent packets, returns a boolean value if
@@ -194,11 +193,14 @@ dwell_time(SentPackets, CutoffTime, Frequency) ->
 
 -spec dwell_time(list(#sent_packet{}), integer(), number() | 'all', number()) -> number().
 %% Scenario 1: entire packet sent before CutoffTime
-dwell_time([P | T], CutoffTime, Frequency, Acc)
-        when P#sent_packet.sent_at + P#sent_packet.time_on_air < CutoffTime ->
+dwell_time([P | T], CutoffTime, Frequency, Acc) when
+    P#sent_packet.sent_at + P#sent_packet.time_on_air < CutoffTime
+->
     dwell_time(T, CutoffTime, Frequency, Acc);
 %% Scenario 2: packet sent on non-relevant frequency.
-dwell_time([P | T], CutoffTime, Frequency, Acc) when is_number(Frequency), P#sent_packet.frequency /= Frequency ->
+dwell_time([P | T], CutoffTime, Frequency, Acc) when
+    is_number(Frequency), P#sent_packet.frequency /= Frequency
+->
     dwell_time(T, CutoffTime, Frequency, Acc);
 %% Scenario 3: Packet started before CutoffTime but finished after CutoffTime.
 dwell_time([P | T], CutoffTime, Frequency, Acc) when P#sent_packet.sent_at =< CutoffTime ->

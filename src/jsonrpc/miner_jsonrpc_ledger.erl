@@ -71,7 +71,7 @@ handle_rpc(<<"ledger_gateways">>, #{<<"verbose">> := Verbose}) ->
         [],
         L
     );
-handle_rpc(<<"ledger_gateways">>, #{ <<"address">> := Address}) ->
+handle_rpc(<<"ledger_gateways">>, #{<<"address">> := Address}) ->
     Ledger = get_ledger(),
     {ok, Height} = blockchain_ledger_v1:current_height(Ledger),
     try
@@ -97,7 +97,7 @@ handle_rpc(<<"ledger_validators">>, []) ->
         [],
         Ledger
     );
-handle_rpc(<<"ledger_validators">>, #{ <<"address">> := Address }) ->
+handle_rpc(<<"ledger_validators">>, #{<<"address">> := Address}) ->
     Ledger = get_ledger(),
     {ok, Height} = blockchain_ledger_v1:current_height(Ledger),
     try
@@ -113,17 +113,21 @@ handle_rpc(<<"ledger_validators">>, Params) ->
     ?jsonrpc_error({invalid_params, Params});
 handle_rpc(<<"ledger_variables">>, []) ->
     Vars = blockchain_ledger_v1:snapshot_vars(get_ledger()),
-    lists:foldl(fun({K, V}, Acc) ->
-                      BinK = ?TO_KEY(K),
-                      BinV = ?TO_VALUE(V),
-                      Acc#{ BinK => BinV }
-              end, #{}, Vars);
-handle_rpc(<<"ledger_variables">>, #{ <<"name">> := Name }) ->
+    lists:foldl(
+        fun({K, V}, Acc) ->
+            BinK = ?TO_KEY(K),
+            BinV = ?TO_VALUE(V),
+            Acc#{BinK => BinV}
+        end,
+        #{},
+        Vars
+    );
+handle_rpc(<<"ledger_variables">>, #{<<"name">> := Name}) ->
     try
         NameAtom = binary_to_existing_atom(Name, utf8),
         case blockchain_ledger_v1:config(NameAtom, get_ledger()) of
             {ok, Var} ->
-                #{ Name => ?TO_VALUE(Var) };
+                #{Name => ?TO_VALUE(Var)};
             {error, not_found} ->
                 ?jsonrpc_error({not_found, Name})
         end
@@ -133,7 +137,7 @@ handle_rpc(<<"ledger_variables">>, #{ <<"name">> := Name }) ->
     end;
 handle_rpc(<<"ledger_variables">>, Params) ->
     ?jsonrpc_error({invalid_params, Params});
-handle_rpc(<<"ledger_lora_region_parameters">>, #{ <<"region">> := Region}) ->
+handle_rpc(<<"ledger_lora_region_parameters">>, #{<<"region">> := Region}) ->
     Ledger = get_ledger(),
     try
         RegionAtom = binary_to_existing_atom(Region, utf8),
@@ -175,10 +179,11 @@ format_ledger_balance(Addr, Entry) ->
 
 format_ledger_gateway_entry(Addr, GW, Height, Verbose) ->
     GWAddr = ?BIN_TO_B58(Addr),
-    GWLoc = case blockchain_ledger_gateway_v2:location(GW) of
-        undefined -> undefined;
-        L -> h3:to_string(L)
-    end,
+    GWLoc =
+        case blockchain_ledger_gateway_v2:location(GW) of
+            undefined -> undefined;
+            L -> h3:to_string(L)
+        end,
     O = #{
         <<"name">> => iolist_to_binary(blockchain_utils:addr2name(Addr)),
         <<"address">> => GWAddr,
@@ -212,7 +217,7 @@ format_ledger_validator(Addr, Val, Ledger, Height) ->
     Tenure = maps:get(tenure, Penalties, 0.0),
     DKG = maps:get(dkg, Penalties, 0.0),
     Perf = maps:get(performance, Penalties, 0.0),
-    TotalPenalty = Tenure+Perf+DKG,
+    TotalPenalty = Tenure + Perf + DKG,
     #{
         <<"nonce">> => blockchain_ledger_validator_v1:nonce(Val),
         <<"name">> => ?BIN_TO_ANIMAL(Addr),
@@ -231,7 +236,7 @@ format_ledger_validator(Addr, Val, Ledger, Height) ->
 -spec format_region_parameters([blockchain_region_param_v1:region_param_v1()]) ->
     [map()].
 format_region_parameters(RegionParameters) ->
-    [ format_region_parameter(RegionParameter) || RegionParameter <- RegionParameters ].
+    [format_region_parameter(RegionParameter) || RegionParameter <- RegionParameters].
 
 -spec format_region_parameter(blockchain_region_param_v1:region_param_v1()) ->
     map().
@@ -252,7 +257,7 @@ format_region_parameter(RegionParam) ->
     [map()].
 format_spreading(Spreading) ->
     SpreadingList = blockchain_region_spreading_v1:tagged_spreading(Spreading),
-    [ format_spreading_factor(SF) || SF <- SpreadingList ].
+    [format_spreading_factor(SF) || SF <- SpreadingList].
 
 -spec format_spreading_factor(blockchain_region_spreading_v1:tagged_spreading()) ->
     map().
@@ -263,4 +268,3 @@ format_spreading_factor(SF) ->
         <<"factor">> => atom_to_binary(SFAtom, utf8),
         <<"max_packet_size">> => MaxPacketSize
     }.
-

@@ -11,7 +11,7 @@ handle_rpc(<<"sc_active">>, []) ->
         {'EXIT', _} ->
             ?jsonrpc_error(timeout);
         ActiveScs ->
-            #{<<"active">> => [ ?TO_VALUE(base64:encode(I)) || I <- maps:keys(ActiveScs) ]}
+            #{<<"active">> => [?TO_VALUE(base64:encode(I)) || I <- maps:keys(ActiveScs)]}
     end;
 handle_rpc(<<"sc_active">>, Params) ->
     ?jsonrpc_error({invalid_params, Params});

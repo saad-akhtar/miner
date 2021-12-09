@@ -171,34 +171,48 @@ start_blockchain(Config) ->
     Curve = ?config(dkg_curve, Config),
     NumConsensusMembers = ?config(num_consensus_members, Config),
 
-    #{secret := Priv, public := Pub} = Keys =
+    #{secret := Priv, public := Pub} =
+        Keys =
         libp2p_crypto:generate_keys(ecc_compact),
     InitialVars = miner_ct_utils:make_vars(Keys, #{}),
 
-    InitialPayment = [ blockchain_txn_coinbase_v1:new(Addr, 5000)
-                       || Addr <- Addresses],
+    InitialPayment = [
+        blockchain_txn_coinbase_v1:new(Addr, 5000)
+     || Addr <- Addresses
+    ],
     Locations = lists:foldl(
         fun(I, Acc) ->
-            [h3:from_geo({37.780586, -122.469470 + I/50}, 13)|Acc]
+            [h3:from_geo({37.780586, -122.469470 + I / 50}, 13) | Acc]
         end,
         [],
         lists:seq(1, length(Addresses))
     ),
-    InitGen = [blockchain_txn_gen_gateway_v1:new(Addr, Addr, Loc, 0)
-               || {Addr, Loc} <- lists:zip(Addresses, Locations)],
+    InitGen = [
+        blockchain_txn_gen_gateway_v1:new(Addr, Addr, Loc, 0)
+     || {Addr, Loc} <- lists:zip(Addresses, Locations)
+    ],
     Txns = InitialVars ++ InitialPayment ++ InitGen,
 
-    {ok, DKGCompletedNodes} = miner_ct_utils:initial_dkg(Miners, Txns, Addresses,
-                                                         NumConsensusMembers, Curve),
+    {ok, DKGCompletedNodes} = miner_ct_utils:initial_dkg(
+        Miners,
+        Txns,
+        Addresses,
+        NumConsensusMembers,
+        Curve
+    ),
 
     %% integrate genesis block
-    _GenesisLoadResults = miner_ct_utils:integrate_genesis_block(hd(DKGCompletedNodes),
-                                                                 Miners -- DKGCompletedNodes),
+    _GenesisLoadResults = miner_ct_utils:integrate_genesis_block(
+        hd(DKGCompletedNodes),
+        Miners -- DKGCompletedNodes
+    ),
 
     {ConsensusMiners, NonConsensusMiners} = miner_ct_utils:miners_by_consensus_state(Miners),
     ct:pal("ConsensusMiners: ~p, NonConsensusMiners: ~p", [ConsensusMiners, NonConsensusMiners]),
 
-
-    [ {master_key, {Priv, Pub}},
-      {consensus_miners, ConsensusMiners},
-      {non_consensus_miners, NonConsensusMiners} | Config ].
+    [
+        {master_key, {Priv, Pub}},
+        {consensus_miners, ConsensusMiners},
+        {non_consensus_miners, NonConsensusMiners}
+        | Config
+    ].

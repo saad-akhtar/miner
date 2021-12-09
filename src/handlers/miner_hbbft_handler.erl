@@ -8,41 +8,44 @@
 -behavior(relcast).
 
 -export([
-         init/1,
-         handle_message/3, handle_command/2, callback_message/3,
-         serialize/1, deserialize/1, restore/2,
-         metadata/3
-        ]).
+    init/1,
+    handle_message/3,
+    handle_command/2,
+    callback_message/3,
+    serialize/1,
+    deserialize/1,
+    restore/2,
+    metadata/3
+]).
 
 -include_lib("blockchain/include/blockchain_vars.hrl").
 -include("miner_util.hrl").
 
--record(state,
-        {
-         n :: non_neg_integer(),
-         f :: non_neg_integer(),
-         id :: non_neg_integer(),
-         hbbft :: hbbft:hbbft_data(),
-         sk :: tc_key_share:tc_key_share() | binary(),
-         sigs_valid     = [] :: [blockchain_block:signature()],
-         sigs_invalid   = [] :: [blockchain_block:signature()],
-         sigs_unchecked = [] :: [blockchain_block:signature()],
-         signatures_required = 0,
-         sig_phase = unsent :: unsent | sig | gossip | done,
-         artifact :: undefined | binary(),
-         members :: [libp2p_crypto:pubkey_bin()],
-         chain :: blockchain:blockchain(),
-         last_round_signed = 0 :: non_neg_integer(),
-         seen = #{} :: #{non_neg_integer() => boolean()},
-         bba = <<>> :: binary(),
+-record(state, {
+    n :: non_neg_integer(),
+    f :: non_neg_integer(),
+    id :: non_neg_integer(),
+    hbbft :: hbbft:hbbft_data(),
+    sk :: tc_key_share:tc_key_share() | binary(),
+    sigs_valid = [] :: [blockchain_block:signature()],
+    sigs_invalid = [] :: [blockchain_block:signature()],
+    sigs_unchecked = [] :: [blockchain_block:signature()],
+    signatures_required = 0,
+    sig_phase = unsent :: unsent | sig | gossip | done,
+    artifact :: undefined | binary(),
+    members :: [libp2p_crypto:pubkey_bin()],
+    chain :: blockchain:blockchain(),
+    last_round_signed = 0 :: non_neg_integer(),
+    seen = #{} :: #{non_neg_integer() => boolean()},
+    bba = <<>> :: binary(),
 
-         %% For artifact re-signing on var-autoskip:
-         swarm_keys :: {libp2p_crypto:pubkey(), libp2p_crypto:sig_fun()},
-         skip_votes = #{} :: #{pos_integer() => pos_integer()}
-        }).
+    %% For artifact re-signing on var-autoskip:
+    swarm_keys :: {libp2p_crypto:pubkey(), libp2p_crypto:sig_fun()},
+    skip_votes = #{} :: #{pos_integer() => pos_integer()}
+}).
 
 -type hbbft_msg() ::
-      hbbft_msg_signature()
+    hbbft_msg_signature()
     | hbbft_msg_signatures()
     | hbbft:acs_msg()
     | hbbft:dec_msg()
@@ -54,10 +57,10 @@
 -type hbbft_msg_signatures() ::
     {signatures, Round :: pos_integer(), [blockchain_block:signature()]}.
 
--spec metadata(V, M, C) -> binary()
-    when V :: tuple | map,
-         M :: #{} | #{seen => binary(), bba_completion => binary()},
-         C :: blockchain:blockchain().
+-spec metadata(V, M, C) -> binary() when
+    V :: tuple | map,
+    M :: #{} | #{seen => binary(), bba_completion => binary()},
+    C :: blockchain:blockchain().
 %% TODO No need to pass Meta when tuple. Use sum type: {map, Meta} | tuple
 metadata(Version, Meta, Chain) ->
     {ok, HeadHash} = blockchain:head_hash(Chain),
@@ -69,31 +72,36 @@ metadata(Version, Meta, Chain) ->
             ChainMeta0 = #{timestamp => erlang:system_time(seconds), head_hash => HeadHash},
             {ok, Height} = blockchain:height(Chain),
             Ledger = blockchain:ledger(Chain),
-            ChainMeta = case blockchain:config(?snapshot_interval, Ledger) of
-                            {ok, Interval} ->
-                                lager:debug("snapshot interval is ~p h ~p rem ~p",
-                                            [Interval, Height, Height rem Interval]),
-                                case Height rem Interval == 0 of
-                                    true ->
-                                        Blocks = blockchain_ledger_snapshot_v1:get_blocks(Chain),
-                                        Infos = blockchain_ledger_snapshot_v1:get_infos(Chain),
-                                        case blockchain_ledger_snapshot_v1:snapshot(Ledger, Blocks, Infos) of
-                                            {ok, Snapshot} ->
-                                                ok = blockchain:add_snapshot(Snapshot, Chain),
-                                                SHA = blockchain_ledger_snapshot_v1:hash(Snapshot),
-                                                lager:info("snapshot hash is ~p", [SHA]),
-                                                maps:put(snapshot_hash, SHA, ChainMeta0);
-                                            _Err ->
-                                                lager:warning("error constructing snapshot ~p", [_Err]),
-                                                ChainMeta0
-                                        end;
-                                    false ->
+            ChainMeta =
+                case blockchain:config(?snapshot_interval, Ledger) of
+                    {ok, Interval} ->
+                        lager:debug(
+                            "snapshot interval is ~p h ~p rem ~p",
+                            [Interval, Height, Height rem Interval]
+                        ),
+                        case Height rem Interval == 0 of
+                            true ->
+                                Blocks = blockchain_ledger_snapshot_v1:get_blocks(Chain),
+                                Infos = blockchain_ledger_snapshot_v1:get_infos(Chain),
+                                case
+                                    blockchain_ledger_snapshot_v1:snapshot(Ledger, Blocks, Infos)
+                                of
+                                    {ok, Snapshot} ->
+                                        ok = blockchain:add_snapshot(Snapshot, Chain),
+                                        SHA = blockchain_ledger_snapshot_v1:hash(Snapshot),
+                                        lager:info("snapshot hash is ~p", [SHA]),
+                                        maps:put(snapshot_hash, SHA, ChainMeta0);
+                                    _Err ->
+                                        lager:warning("error constructing snapshot ~p", [_Err]),
                                         ChainMeta0
                                 end;
-                            _ ->
-                                lager:info("no snapshot interval configured"),
+                            false ->
                                 ChainMeta0
-                        end,
+                        end;
+                    _ ->
+                        lager:info("no snapshot interval configured"),
+                        ChainMeta0
+                end,
             t2b(maps:merge(Meta, ChainMeta))
     end.
 
@@ -105,22 +113,34 @@ init([Members, Id, N, F, BatchSize, SK, Chain, Round, Buf]) ->
     ?mark(init),
     Ledger0 = blockchain:ledger(Chain),
     Version = md_version(Ledger0),
-    HBBFT = hbbft:init(SK, N, F, Id-1, BatchSize, 1500,
-                       {?MODULE, metadata, [Version, #{}, Chain]}, Round, Buf),
+    HBBFT = hbbft:init(
+        SK,
+        N,
+        F,
+        Id - 1,
+        BatchSize,
+        1500,
+        {?MODULE, metadata, [Version, #{}, Chain]},
+        Round,
+        Buf
+    ),
     Ledger = blockchain_ledger_v1:new_context(Ledger0),
     Chain1 = blockchain:ledger(Ledger, Chain),
     {ok, MyPubKey, SignFun, _ECDHFun} = blockchain_swarm:keys(),
 
     lager:info("HBBFT~p started~n", [Id]),
-    {ok, #state{n = N,
-                id = Id - 1,
-                sk = SK,
-                f = F,
-                members = Members,
-                signatures_required = N - F,
-                hbbft = HBBFT,
-                swarm_keys = {MyPubKey, SignFun},  % For re-signing on var-autoskip
-                chain = Chain1}}.
+    {ok, #state{
+        n = N,
+        id = Id - 1,
+        sk = SK,
+        f = F,
+        members = Members,
+        signatures_required = N - F,
+        hbbft = HBBFT,
+        % For re-signing on var-autoskip
+        swarm_keys = {MyPubKey, SignFun},
+        chain = Chain1
+    }}.
 
 handle_command(start_acs, State) ->
     case hbbft:start_on_demand(State#state.hbbft) of
@@ -130,7 +150,7 @@ handle_command(start_acs, State) ->
         {NewHBBFT, {send, Msgs}} ->
             ?mark(start_acs_new),
             lager:notice("Started HBBFT round because of a block timeout"),
-            {reply, ok, fixup_msgs(Msgs), State#state{hbbft=NewHBBFT}}
+            {reply, ok, fixup_msgs(Msgs), State#state{hbbft = NewHBBFT}}
     end;
 handle_command(get_buf, State) ->
     {reply, {ok, hbbft:buf(State#state.hbbft)}, ignore};
@@ -146,28 +166,37 @@ handle_command({stop, Timeout}, State) ->
     {reply, ok, [{stop, Timeout}], State};
 handle_command({status, Ref, Worker}, State) ->
     Map = hbbft:status(State#state.hbbft),
-    ArtifactHash = case State#state.artifact of
-                       undefined -> undefined;
-                       A -> blockchain_utils:bin_to_hex(crypto:hash(sha256, A))
-                   end,
+    ArtifactHash =
+        case State#state.artifact of
+            undefined -> undefined;
+            A -> blockchain_utils:bin_to_hex(crypto:hash(sha256, A))
+        end,
     SigMemIds = addr_sigs_to_mem_pos(State#state.sigs_valid, State),
-    PubKeyHash = crypto:hash(sha256, term_to_binary(tc_pubkey:serialize(tc_key_share:public_key(State#state.sk)))),
-    Worker ! {Ref, maps:merge(#{signatures_required =>
-                                    max(State#state.signatures_required - length(SigMemIds), 0),
-                                signatures => SigMemIds,
-                                sig_phase => State#state.sig_phase,
-                                last_round_signed => State#state.last_round_signed,
-                                skip_votes => State#state.skip_votes,
-                                artifact_hash => ArtifactHash,
-                                public_key_hash => blockchain_utils:bin_to_hex(PubKeyHash)
-                               }, maps:remove(sig_sent, Map))},
+    PubKeyHash = crypto:hash(
+        sha256, term_to_binary(tc_pubkey:serialize(tc_key_share:public_key(State#state.sk)))
+    ),
+    Worker !
+        {Ref,
+            maps:merge(
+                #{
+                    signatures_required =>
+                        max(State#state.signatures_required - length(SigMemIds), 0),
+                    signatures => SigMemIds,
+                    sig_phase => State#state.sig_phase,
+                    last_round_signed => State#state.last_round_signed,
+                    skip_votes => State#state.skip_votes,
+                    artifact_hash => ArtifactHash,
+                    public_key_hash => blockchain_utils:bin_to_hex(PubKeyHash)
+                },
+                maps:remove(sig_sent, Map)
+            )},
     {reply, ok, ignore};
 handle_command(mark_done, _State) ->
     {reply, ok, ignore};
 %% XXX this is a hack because we don't yet have a way to message this process other ways
 handle_command(
     {next_round, NextRound, TxnsToRemove, _Sync},
-    #state{chain=Chain, hbbft=HBBFT}=S
+    #state{chain = Chain, hbbft = HBBFT} = S
 ) ->
     PrevRound = hbbft:round(HBBFT),
     case NextRound - PrevRound of
@@ -176,8 +205,10 @@ handle_command(
             %% (with the old speculatively absorbed changes that may now be invalid/stale)
             %% and create a new one, and then use that new context to filter the pending
             %% transactions to remove any that have become invalid
-            lager:info("Advancing from PreviousRound: ~p to NextRound ~p and emptying hbbft buffer",
-                       [PrevRound, NextRound]),
+            lager:info(
+                "Advancing from PreviousRound: ~p to NextRound ~p and emptying hbbft buffer",
+                [PrevRound, NextRound]
+            ),
             ?mark(next_round),
             HBBFT1 =
                 case get(filtered) of
@@ -192,10 +223,19 @@ handle_command(
             Ledger = blockchain:ledger(Chain),
             Version = md_version(Ledger),
             Seen = blockchain_utils:map_to_bitvector(S#state.seen),
-            HBBFT2 = hbbft:set_stamp_fun(?MODULE, metadata, [Version,
-                                                             #{seen => Seen,
-                                                               bba_completion => S#state.bba},
-                                                             Chain], HBBFT1),
+            HBBFT2 = hbbft:set_stamp_fun(
+                ?MODULE,
+                metadata,
+                [
+                    Version,
+                    #{
+                        seen => Seen,
+                        bba_completion => S#state.bba
+                    },
+                    Chain
+                ],
+                HBBFT1
+            ),
             case hbbft:next_round(HBBFT2, NextRound, []) of
                 {HBBFT3, ok} ->
                     {reply, ok, [new_epoch], state_reset(HBBFT3, S)};
@@ -206,12 +246,14 @@ handle_command(
             lager:warning("Already at the current Round: ~p", [NextRound]),
             {reply, ok, ignore};
         _ ->
-            lager:warning("Cannot advance to NextRound: ~p from PrevRound: ~p", [NextRound, PrevRound]),
+            lager:warning("Cannot advance to NextRound: ~p from PrevRound: ~p", [
+                NextRound, PrevRound
+            ]),
             {reply, error, ignore}
     end;
 %% these are coming back from the sidecar, they don't need to be
 %% validated further.
-handle_command({txn, Txn}, State=#state{hbbft=HBBFT}) ->
+handle_command({txn, Txn}, State = #state{hbbft = HBBFT}) ->
     Buf = hbbft:buf(HBBFT),
     case lists:member(blockchain_txn:serialize(Txn), Buf) of
         true ->
@@ -219,16 +261,21 @@ handle_command({txn, Txn}, State=#state{hbbft=HBBFT}) ->
         false ->
             case hbbft:input(State#state.hbbft, blockchain_txn:serialize(Txn)) of
                 {NewHBBFT, ok} ->
-                    {reply, ok, [], State#state{hbbft=NewHBBFT}};
+                    {reply, ok, [], State#state{hbbft = NewHBBFT}};
                 {_HBBFT, full} ->
                     {reply, {error, full}, ignore};
                 {NewHBBFT, {send, Msgs}} ->
-                    {reply, ok, fixup_msgs(Msgs), State#state{hbbft=NewHBBFT}}
+                    {reply, ok, fixup_msgs(Msgs), State#state{hbbft = NewHBBFT}}
             end
     end;
-handle_command(maybe_skip, State = #state{hbbft = HBBFT,
-                                          id = MyIndex,
-                                          skip_votes = Skips}) ->
+handle_command(
+    maybe_skip,
+    State = #state{
+        hbbft = HBBFT,
+        id = MyIndex,
+        skip_votes = Skips
+    }
+) ->
     MyRound = hbbft:round(HBBFT),
     %% put in a fake local vote here for the case where we have no skips
     ProposedRound = median_not_taken(maps:merge(#{MyIndex => {0, MyRound}}, Skips)),
@@ -239,21 +286,21 @@ handle_command(UnknownCommand, _State) ->
     {reply, ignored, ignore}.
 
 -spec handle_message(binary(), pos_integer(), #state{}) ->
-    defer | ignore | {#state{}, [RelcastMsg]} when
+    defer | ignore | {#state{}, [RelcastMsg]}
+when
     RelcastMsg ::
-          {multicast, binary()}
+        {multicast, binary()}
         | {unicast, pos_integer(), binary()}.
-handle_message(<<BinMsgIn/binary>>, Index, #state{hbbft = HBBFT, skip_votes = Skips}=S0) ->
+handle_message(<<BinMsgIn/binary>>, Index, #state{hbbft = HBBFT, skip_votes = Skips} = S0) ->
     CurRound = hbbft:round(HBBFT),
     case bin_to_msg(BinMsgIn) of
         %% Multiple sigs
-        {ok, {signatures, SigRound, _   }} when SigRound > CurRound ->
+        {ok, {signatures, SigRound, _}} when SigRound > CurRound ->
             defer;
-        {ok, {signatures, SigRound, _   }} when SigRound < CurRound ->
+        {ok, {signatures, SigRound, _}} when SigRound < CurRound ->
             ignore;
         {ok, {signatures, _, SigsIn}} ->
             handle_sigs({received, SigsIn}, S0);
-
         %% Single sig
         {ok, {signature, SigRound, _, _}} when SigRound > CurRound ->
             defer;
@@ -261,7 +308,6 @@ handle_message(<<BinMsgIn/binary>>, Index, #state{hbbft = HBBFT, skip_votes = Sk
             ignore;
         {ok, {signature, _, Addr, Sig}} ->
             handle_sigs({received, [{Addr, Sig}]}, S0);
-
         {ok, {proposed_skip, ProposedRound, IndexRound}} when ProposedRound =/= CurRound ->
             lager:info("proposed skip to round ~p", [ProposedRound]),
             case process_skips(ProposedRound, IndexRound, S0#state.f, Index, Skips) of
@@ -288,8 +334,10 @@ handle_message(<<BinMsgIn/binary>>, Index, #state{hbbft = HBBFT, skip_votes = Sk
                     ToSend = fixup_msgs(ToSend1 ++ ToSend2),
                     %% we retain the skip votes here because we may not succeed and we want the
                     %% algorithm to converge more quickly in that case
-                    {(state_reset(HBBFT2, S0))#state{skip_votes = Skips1},
-                     [ new_epoch, SkipGossip ] ++ ToSend};
+                    {
+                        (state_reset(HBBFT2, S0))#state{skip_votes = Skips1},
+                        [new_epoch, SkipGossip] ++ ToSend
+                    };
                 {wait, Skips1} ->
                     lager:info("waiting: ~p", [Skips1]),
                     {S0#state{skip_votes = Skips1}, []}
@@ -308,22 +356,23 @@ handle_message(<<BinMsgIn/binary>>, Index, #state{hbbft = HBBFT, skip_votes = Sk
 callback_message(_, _, _) -> none.
 
 -spec handle_msg_hbbft(MsgHBBFT, pos_integer(), #state{}) ->
-    defer | ignore | {#state{}, [MsgRelcast]} when
+    defer | ignore | {#state{}, [MsgRelcast]}
+when
     MsgHBBFT :: hbbft:acs_msg() | hbbft:dec_msg() | hbbft:sign_msg(),
     MsgRelcast ::
-          {multicast, binary()}
+        {multicast, binary()}
         | {unicast, pos_integer(), binary()}.
-handle_msg_hbbft(Msg, Index, #state{hbbft=HBBFT0}=S0) ->
+handle_msg_hbbft(Msg, Index, #state{hbbft = HBBFT0} = S0) ->
     S1 = S0#state{seen = (S0#state.seen)#{Index => true}},
     case hbbft:handle_msg(HBBFT0, Index - 1, Msg) of
         ignore ->
             ignore;
         {HBBFT1, ok} ->
-            {S1#state{hbbft=HBBFT1}, []};
+            {S1#state{hbbft = HBBFT1}, []};
         {_, defer} ->
             defer;
         {HBBFT1, {send, MsgsOut}} ->
-            {S1#state{hbbft=HBBFT1}, fixup_msgs(MsgsOut)};
+            {S1#state{hbbft = HBBFT1}, fixup_msgs(MsgsOut)};
         {HBBFT1, {result, {transactions, Metadata0, BinTxns}}} ->
             Metadata = lists:map(fun({Id, BMap}) -> {Id, binary_to_term(BMap)} end, Metadata0),
             Txns = [blockchain_txn:deserialize(B) || B <- BinTxns],
@@ -336,31 +385,32 @@ handle_msg_hbbft(Msg, Index, #state{hbbft=HBBFT0}=S0) ->
             NewRound = hbbft:round(HBBFT1),
             Before = erlang:monotonic_time(millisecond),
             case miner:create_block(Metadata, Txns, NewRound) of
-                {ok,
-                    #{
-                        address               := Address,
-                        unsigned_binary_block := Artifact,
-                        signature             := Signature,
-                        pending_txns          := PendingTxns,
-                        invalid_txns          := InvalidTxns
-                     }
-                } ->
+                {ok, #{
+                    address := Address,
+                    unsigned_binary_block := Artifact,
+                    signature := Signature,
+                    pending_txns := PendingTxns,
+                    invalid_txns := InvalidTxns
+                }} ->
                     ?mark(block_success),
                     %% call hbbft finalize round
                     Duration = erlang:monotonic_time(millisecond) - Before,
                     lager:info("block creation for round ~p took: ~p ms", [NewRound, Duration]),
                     %% remove any pending txns or invalid txns from the buffer
-                    BinTxnsToRemove = [blockchain_txn:serialize(T) || T <- PendingTxns ++ InvalidTxns],
+                    BinTxnsToRemove = [
+                        blockchain_txn:serialize(T)
+                     || T <- PendingTxns ++ InvalidTxns
+                    ],
                     HBBFT2 = hbbft:finalize_round(HBBFT1, BinTxnsToRemove),
                     Buf = hbbft:buf(HBBFT2),
                     %% do an async filter of the remaining txn buffer while we finish off the block
                     Buf1 = miner_hbbft_sidecar:prefilter_round(Buf, PendingTxns),
                     put(filtered, NewRound),
                     S2 = S1#state{
-                        hbbft     = hbbft:buf(Buf1, HBBFT2),
+                        hbbft = hbbft:buf(Buf1, HBBFT2),
                         sig_phase = sig,
-                        bba       = make_bba(S1#state.n, Metadata),
-                        artifact  = Artifact
+                        bba = make_bba(S1#state.n, Metadata),
+                        artifact = Artifact
                     },
                     ?mark(finalize_round),
                     handle_sigs({produced, {Address, Signature}, NewRound}, S2);
@@ -369,7 +419,7 @@ handle_msg_hbbft(Msg, Index, #state{hbbft=HBBFT0}=S0) ->
                     %% this is almost certainly because we got the new block gossipped before we completed consensus locally
                     %% which is harmless
                     lager:warning("failed to create new block ~p", [Reason]),
-                    {S1#state{hbbft=HBBFT1}, []}
+                    {S1#state{hbbft = HBBFT1}, []}
             end
     end.
 
@@ -378,14 +428,18 @@ make_bba(Sz, Metadata) ->
     %% note that BBA indices are 0 indexed, but bitvectors are 1 indexed
     %% so we correct that here
     M = maps:from_list([{Id + 1, true} || {Id, _} <- Metadata]),
-    M1 = lists:foldl(fun(Id, Acc) ->
-                             case Acc of
-                                 #{Id := _} ->
-                                     Acc;
-                                 _ ->
-                                     Acc#{Id => false}
-                             end
-                     end, M, lists:seq(1, Sz)),
+    M1 = lists:foldl(
+        fun(Id, Acc) ->
+            case Acc of
+                #{Id := _} ->
+                    Acc;
+                _ ->
+                    Acc#{Id => false}
+            end
+        end,
+        M,
+        lists:seq(1, Sz)
+    ),
     blockchain_utils:map_to_bitvector(M1).
 
 -spec serialize(#state{}) -> #{atom() => binary()}.
@@ -394,67 +448,78 @@ serialize(State) ->
     Fields = record_info(fields, state),
     StateList0 = tuple_to_list(State),
     StateList = tl(StateList0),
-    lists:foldl(fun({K = hbbft, _}, M) ->
-                        M#{K => SerializedHBBFT};
-                   ({K = sk, _}, M) ->
-                        M#{K => term_to_binary(SerializedSK,  [compressed])};
-                   ({chain, _}, M) ->
-                        M;
-                   ({skip_votes, _}, M) ->
-                        M;
-                   ({K, V}, M)->
-                        VB = term_to_binary(V, [compressed]),
-                        M#{K => VB}
-                end,
-                #{},
-                lists:zip(Fields, StateList)).
+    lists:foldl(
+        fun
+            ({K = hbbft, _}, M) ->
+                M#{K => SerializedHBBFT};
+            ({K = sk, _}, M) ->
+                M#{K => term_to_binary(SerializedSK, [compressed])};
+            ({chain, _}, M) ->
+                M;
+            ({skip_votes, _}, M) ->
+                M;
+            ({K, V}, M) ->
+                VB = term_to_binary(V, [compressed]),
+                M#{K => VB}
+        end,
+        #{},
+        lists:zip(Fields, StateList)
+    ).
 
 -spec deserialize(binary() | #{atom() => binary()}) -> #state{}.
 deserialize(BinState) when is_binary(BinState) ->
     State = binary_to_term(BinState),
     SK = tc_key_share:deserialize(State#state.sk),
     HBBFT = hbbft:deserialize(State#state.hbbft, SK),
-    State#state{hbbft=HBBFT, sk=SK};
-deserialize(#{sk := SKSer,
-              hbbft := HBBFTSer} = StateMap) ->
+    State#state{hbbft = HBBFT, sk = SK};
+deserialize(
+    #{
+        sk := SKSer,
+        hbbft := HBBFTSer
+    } = StateMap
+) ->
     SK = tc_key_share:deserialize(binary_to_term(SKSer)),
     HBBFT = hbbft:deserialize(HBBFTSer, SK),
     Fields = record_info(fields, state),
     Bundef = term_to_binary(undefined, [compressed]),
     DeserList =
         lists:map(
-          fun(hbbft) ->
-                  HBBFT;
-             (sk) ->
-                  SK;
-             (chain) ->
-                  undefined;
-             (skip_votes) ->
-                  #{};
-             (K)->
-                  case StateMap of
-                      #{K := V} when V /= undefined andalso
-                                     V /= Bundef ->
-                          binary_to_term(V);
-                      _ when K == sig_phase ->
-                          sig;
-                      _ when K == seen ->
-                          #{};
-                      _ when K == sigs_valid ->
-                          [];
-                      _ when K == sigs_invalid ->
-                          [];
-                      _ when K == sigs_unchecked ->
-                          [];
-                      _ when K == last_round_signed ->
-                          0;
-                      _ when K == bba ->
-                          <<>>;
-                      _ ->
-                          undefined
-                  end
-          end,
-          Fields),
+            fun
+                (hbbft) ->
+                    HBBFT;
+                (sk) ->
+                    SK;
+                (chain) ->
+                    undefined;
+                (skip_votes) ->
+                    #{};
+                (K) ->
+                    case StateMap of
+                        #{K := V} when
+                            V /= undefined andalso
+                                V /= Bundef
+                        ->
+                            binary_to_term(V);
+                        _ when K == sig_phase ->
+                            sig;
+                        _ when K == seen ->
+                            #{};
+                        _ when K == sigs_valid ->
+                            [];
+                        _ when K == sigs_invalid ->
+                            [];
+                        _ when K == sigs_unchecked ->
+                            [];
+                        _ when K == last_round_signed ->
+                            0;
+                        _ when K == bba ->
+                            <<>>;
+                        _ ->
+                            undefined
+                    end
+            end,
+            Fields
+        ),
     list_to_tuple([state | DeserList]).
 
 -spec restore(#state{}, #state{}) -> {ok, #state{}}.
@@ -468,32 +533,42 @@ restore(OldState, NewState) ->
     HBBFT1 = hbbft:buf(Buf1, HBBFT),
     Chain = NewState#state.chain,
     SwarmKeys = NewState#state.swarm_keys,
-    {ok, OldState#state{hbbft = hbbft:set_stamp_fun(M, F, A, HBBFT1),
-                        chain=Chain, swarm_keys=SwarmKeys}}.
+    {ok, OldState#state{
+        hbbft = hbbft:set_stamp_fun(M, F, A, HBBFT1),
+        chain = Chain,
+        swarm_keys = SwarmKeys
+    }}.
 
 %% helper functions
 -spec fixup_msgs([MsgIn]) -> [MsgOut] when
-    MsgIn  :: {unicast, non_neg_integer(), term()}   | {multicast, term()},
+    MsgIn :: {unicast, non_neg_integer(), term()} | {multicast, term()},
     MsgOut :: {unicast, non_neg_integer(), binary()} | {multicast, binary()}.
 fixup_msgs(Msgs) ->
-    lists:map(fun({unicast, J, NextMsg}) ->
-                      {unicast, J+1, msg_to_bin(NextMsg)};
-                 ({multicast, NextMsg}) ->
-                      {multicast, msg_to_bin(NextMsg)}
-              end, Msgs).
+    lists:map(
+        fun
+            ({unicast, J, NextMsg}) ->
+                {unicast, J + 1, msg_to_bin(NextMsg)};
+            ({multicast, NextMsg}) ->
+                {multicast, msg_to_bin(NextMsg)}
+        end,
+        Msgs
+    ).
 
 %% @doc Finds unique member positions (if any) of addresses in the given
 %% `{Address, Signature}' tuples.
 %% @end
 -spec addr_sigs_to_mem_pos([blockchain_block:signature()], #state{}) ->
     [pos_integer()].
-addr_sigs_to_mem_pos(AddrSigs, #state{members=MemberAddresses}) ->
+addr_sigs_to_mem_pos(AddrSigs, #state{members = MemberAddresses}) ->
     lists:usort(positions([Addr || {Addr, _} <- AddrSigs], MemberAddresses)).
 
 -spec positions([A], [A]) -> [pos_integer()].
 positions(Unordered, Ordered) ->
     Positions = lists:zip(Ordered, lists:seq(1, length(Ordered))),
-    FindPosition = fun (X) -> {_, I} = lists:keyfind(X, 1, Positions), I end,
+    FindPosition = fun(X) ->
+        {_, I} = lists:keyfind(X, 1, Positions),
+        I
+    end,
     lists:map(FindPosition, Unordered).
 
 -spec md_version(blockchain_ledger_v1:ledger()) -> map | tuple.
@@ -506,21 +581,24 @@ md_version(Ledger) ->
     end.
 
 -spec state_reset(hbbft:hbbft_data(), #state{}) -> #state{}.
-state_reset(HBBFT, #state{}=S) ->
+state_reset(HBBFT, #state{} = S) ->
     %% default to the full bit vector, not the empty one
     DefaultBBAVote = blockchain_utils:map_to_bitvector(
-                       maps:from_list([ {I, true}
-                                        || I <- lists:seq(1, length(S#state.members))])),
+        maps:from_list([
+            {I, true}
+         || I <- lists:seq(1, length(S#state.members))
+        ])
+    ),
     S#state{
-        hbbft          = HBBFT,
-        sigs_valid     = [],
-        sigs_invalid   = [],
+        hbbft = HBBFT,
+        sigs_valid = [],
+        sigs_invalid = [],
         sigs_unchecked = [],
-        artifact       = undefined,
-        sig_phase      = unsent,
-        bba            = DefaultBBAVote,
-        seen           = #{},
-        skip_votes     = #{}
+        artifact = undefined,
+        sig_phase = unsent,
+        bba = DefaultBBAVote,
+        seen = #{},
+        skip_votes = #{}
     }.
 
 -spec handle_sigs(
@@ -529,7 +607,7 @@ state_reset(HBBFT, #state{}=S) ->
     #state{}
 ) ->
     {#state{}, [{multicast, binary()}]}.
-handle_sigs(Given, #state{hbbft=HBBFT}=S0) ->
+handle_sigs(Given, #state{hbbft = HBBFT} = S0) ->
     SigsIn =
         case Given of
             {received, Sigs} -> Sigs;
@@ -563,16 +641,16 @@ handle_sigs(Given, #state{hbbft=HBBFT}=S0) ->
         | pending,
         #state{}
     }.
-state_sigs_input(SigsIn, #state{hbbft=HBBFT}=S0) ->
+state_sigs_input(SigsIn, #state{hbbft = HBBFT} = S0) ->
     CurRound = hbbft:round(HBBFT),
     S1 = state_sigs_add(SigsIn, S0),
     S2 = state_sigs_retry_unchecked(S1),
     case state_sigs_check_if_enough(S2) of
-        {{enough_for, {gossip, _}=Gossip}, S3} ->
+        {{enough_for, {gossip, _} = Gossip}, S3} ->
             {Gossip, S3#state{sig_phase = gossip}};
         {
-            {enough_for, {done, Sigs}=Done},
-            #state{artifact = <<Art/binary>>, last_round_signed=LastRoundSigned}=S3
+            {enough_for, {done, Sigs} = Done},
+            #state{artifact = <<Art/binary>>, last_round_signed = LastRoundSigned} = S3
         } when CurRound > LastRoundSigned ->
             ok = miner:signed_block(Sigs, Art),
             S4 =
@@ -596,16 +674,16 @@ state_sigs_input(SigsIn, #state{hbbft=HBBFT}=S0) ->
     {{varless, [blockchain_block:signature()]} | original, #state{}}.
 state_sigs_maybe_switch_to_varless(
     #state{
-        artifact     = <<_/binary>>,
-        f            = F,
+        artifact = <<_/binary>>,
+        f = F,
         sigs_invalid = SigsInvalid,
-        swarm_keys   = {PubKey, SignFun}
-    }=S0
+        swarm_keys = {PubKey, SignFun}
+    } = S0
 ) when length(SigsInvalid) >= F + 1 ->
     S1 = state_remove_var_txns_from_artifact(S0),
     SigsVarlesslyValid0 =
         lists:filter(
-            fun ({_, _}=AddrSig) -> sig_is_valid(AddrSig, S1) end,
+            fun({_, _} = AddrSig) -> sig_is_valid(AddrSig, S1) end,
             SigsInvalid
         ),
     case length(SigsVarlesslyValid0) >= F + 1 of
@@ -615,8 +693,8 @@ state_sigs_maybe_switch_to_varless(
             <<Sig/binary>> = SignFun(ArtVarless),
             SigsVarlesslyValid1 = kvl_set(Addr, Sig, SigsVarlesslyValid0),
             S2 = S1#state{
-                sigs_valid     = SigsVarlesslyValid1,
-                sigs_invalid   = [],
+                sigs_valid = SigsVarlesslyValid1,
+                sigs_invalid = [],
                 sigs_unchecked = []
             },
             lager:warning(
@@ -628,48 +706,51 @@ state_sigs_maybe_switch_to_varless(
         false ->
             {original, S0}
     end;
-state_sigs_maybe_switch_to_varless(#state{}=S) ->
+state_sigs_maybe_switch_to_varless(#state{} = S) ->
     {original, S}.
 
 -spec state_remove_var_txns_from_artifact(#state{}) ->
     #state{}.
-state_remove_var_txns_from_artifact(#state{artifact=Art0}=S) ->
+state_remove_var_txns_from_artifact(#state{artifact = Art0} = S) ->
     Block0 = blockchain_block:deserialize(Art0),
     Block1 = blockchain_block_v1:remove_var_txns(Block0),
     Art1 = blockchain_block:serialize(Block1),
-    S#state{artifact=Art1}.
+    S#state{artifact = Art1}.
 
 -spec state_sigs_add([blockchain_block:signature()], #state{}) -> #state{}.
-state_sigs_add(Sigs, #state{}=S) ->
+state_sigs_add(Sigs, #state{} = S) ->
     lists:foldl(fun state_sigs_add_one/2, S, Sigs).
 
 -spec state_sigs_add_one(blockchain_block:signature(), #state{}) -> #state{}.
-state_sigs_add_one({Addr, Sig}, #state{artifact = undefined, sigs_unchecked=Unchecked}=S) ->
+state_sigs_add_one({Addr, Sig}, #state{artifact = undefined, sigs_unchecked = Unchecked} = S) ->
     %% Provisionally accept signatures if we don't have the means to
     %% verify them yet. We'll retry verifying them later.
     S#state{sigs_unchecked = kvl_set(Addr, Sig, Unchecked)};
-state_sigs_add_one({Addr, Sig}, #state{}=S) ->
+state_sigs_add_one({Addr, Sig}, #state{} = S) ->
     case sig_is_valid({Addr, Sig}, S) of
-        true  -> S#state{sigs_valid   = kvl_set(Addr, Sig, S#state.sigs_valid)};
+        true -> S#state{sigs_valid = kvl_set(Addr, Sig, S#state.sigs_valid)};
         false -> S#state{sigs_invalid = kvl_set(Addr, Sig, S#state.sigs_invalid)}
     end.
 
 -spec state_sigs_retry_unchecked(#state{}) -> #state{}.
-state_sigs_retry_unchecked(#state{artifact=undefined}=S0) ->
+state_sigs_retry_unchecked(#state{artifact = undefined} = S0) ->
     S0;
-state_sigs_retry_unchecked(#state{artifact = <<_/binary>>, sigs_unchecked = Unchecked}=S) ->
+state_sigs_retry_unchecked(#state{artifact = <<_/binary>>, sigs_unchecked = Unchecked} = S) ->
     state_sigs_add(Unchecked, S).
 
 -spec state_sigs_check_if_enough(#state{}) ->
-    {not_enough | {enough_for, Next}, #state{}} when
+    {not_enough | {enough_for, Next}, #state{}}
+when
     Next ::
         {gossip, [blockchain_block:signature()]}
         | {done, [blockchain_block:signature()]}.
-state_sigs_check_if_enough(#state{artifact=undefined}=S) ->
+state_sigs_check_if_enough(#state{artifact = undefined} = S) ->
     {not_enough, S};
-state_sigs_check_if_enough(#state{sig_phase = sig, sigs_valid = Sigs, f = F}=S) when length(Sigs) < F + 1 ->
+state_sigs_check_if_enough(#state{sig_phase = sig, sigs_valid = Sigs, f = F} = S) when
+    length(Sigs) < F + 1
+->
     {not_enough, S};
-state_sigs_check_if_enough(#state{sig_phase = done, sigs_valid = SigsValid}=S) ->
+state_sigs_check_if_enough(#state{sig_phase = done, sigs_valid = SigsValid} = S) ->
     {{enough_for, {done, SigsValid}}, S};
 state_sigs_check_if_enough(
     #state{
@@ -678,7 +759,7 @@ state_sigs_check_if_enough(
         f = F,
         sigs_valid = SigsValidAll,
         signatures_required = Threshold0
-    }=S0
+    } = S0
 ) ->
     Threshold1 =
         case Phase of
@@ -686,8 +767,8 @@ state_sigs_check_if_enough(
             gossip -> Threshold0
         end,
     case
-        length(SigsValidAll) =< (3*F)+1 andalso
-        length(SigsValidAll) >= Threshold1
+        length(SigsValidAll) =< (3 * F) + 1 andalso
+            length(SigsValidAll) >= Threshold1
     of
         true ->
             %% So, this is a little dicey, if we don't need all N signatures,
@@ -714,14 +795,13 @@ state_sigs_check_if_enough(
 
 -spec sig_is_valid(blockchain_block:signature(), #state{}) -> boolean().
 sig_is_valid(
-    {<<Addr/binary>>, <<Sig/binary>>}=AddrSig,
-    #state{artifact=Art, members=MemberAddresses, hbbft=HBBFT}=S
+    {<<Addr/binary>>, <<Sig/binary>>} = AddrSig,
+    #state{artifact = Art, members = MemberAddresses, hbbft = HBBFT} = S
 ) ->
     IsMember = lists:member(Addr, MemberAddresses),
     IsValid =
-        IsMember
-        andalso
-        libp2p_crypto:verify(Art, Sig, libp2p_crypto:bin_to_pubkey(Addr)),
+        IsMember andalso
+            libp2p_crypto:verify(Art, Sig, libp2p_crypto:bin_to_pubkey(Addr)),
     case IsValid of
         true ->
             ok;
@@ -730,9 +810,13 @@ sig_is_valid(
             case IsMember of
                 true ->
                     [MemId] = addr_sigs_to_mem_pos([AddrSig], S),
-                    lager:warning("Invalid signature from member ~b in our round ~p", [MemId, CurRound]);
+                    lager:warning("Invalid signature from member ~b in our round ~p", [
+                        MemId, CurRound
+                    ]);
                 false ->
-                    lager:warning("Invalid signature from non-member ~s in our round ~p", [b58(Addr), CurRound])
+                    lager:warning("Invalid signature from non-member ~s in our round ~p", [
+                        b58(Addr), CurRound
+                    ])
             end
     end,
     IsValid.
@@ -748,13 +832,16 @@ b58(<<Bin/binary>>) ->
 %% do nothing if we've advanced
 process_skips(Proposed, SenderRound, F, Sender, Votes) ->
     Votes1 = Votes#{Sender => {Proposed, SenderRound}},
-    PropVotes = maps:fold(fun(_Sender, {Vote, _OwnRound}, Acc) when Vote =:= Proposed ->
-                                  Acc + 1;
-                             (_Sender, {_OtherVote, _OwnRound}, Acc) ->
-                                  Acc
-                          end,
-                          0,
-                          Votes1),
+    PropVotes = maps:fold(
+        fun
+            (_Sender, {Vote, _OwnRound}, Acc) when Vote =:= Proposed ->
+                Acc + 1;
+            (_Sender, {_OtherVote, _OwnRound}, Acc) ->
+                Acc
+        end,
+        0,
+        Votes1
+    ),
     %% equal here because we only want to go once, at the point of saturation
     case PropVotes == (2 * F) + 1 of
         true -> {skip, Votes1};
@@ -764,7 +851,7 @@ process_skips(Proposed, SenderRound, F, Sender, Votes) ->
 %% the idea here is to take a clean round that's higher than the median, which should be relatively
 %% hard to manipulate by cheating
 -spec median_not_taken(#{pos_integer() => {pos_integer(), pos_integer()}}) ->
-                              pos_integer().
+    pos_integer().
 median_not_taken(Map) ->
     {_Votes, Rounds} = lists:unzip(maps:values(Map)),
     lager:info("rounds ~p", [lists:sort(Rounds)]),
@@ -800,8 +887,9 @@ msg_to_bin(Msg) ->
 bin_to_msg(<<Bin/binary>>) ->
     try
         {ok, binary_to_term(Bin)}
-    catch _:_ ->
-        {error, truncated}
+    catch
+        _:_ ->
+            {error, truncated}
     end.
 
 -ifdef(TEST).

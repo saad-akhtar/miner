@@ -14,13 +14,19 @@ all: compile
 deps:
 	$(REBAR) get-deps
 
-compile:
+format:
+	$(REBAR) format
+
+compile: format
 	$(REBAR) compile
 
 clean:
 	$(REBAR) clean
 
 test: compile
+	$(REBAR) fmt --verbose --check rebar.config
+	$(REBAR) fmt --verbose --check "{src,include,test}/**/*.{hrl,erl,app.src}"
+	$(REBAR) fmt --verbose --check "config/*.{config,config.src}"
 	$(REBAR) as test do eunit, ct --verbose
 
 typecheck:

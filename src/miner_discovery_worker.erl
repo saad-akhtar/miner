@@ -71,17 +71,19 @@ handle_info(
         region = Region
     } = State
 ) ->
-    ChannelSelectorFun = fun (FreqList) ->
+    ChannelSelectorFun = fun(FreqList) ->
         lists:nth(rand:uniform(length(FreqList)), FreqList)
     end,
     Spreading = spreading(Region, byte_size(Packet)),
-    case miner_lora:send_poc(
-        Packet,
-        immediate,
-        ChannelSelectorFun,
-        Spreading,
-        TxPower
-    ) of
+    case
+        miner_lora:send_poc(
+            Packet,
+            immediate,
+            ChannelSelectorFun,
+            Spreading,
+            TxPower
+        )
+    of
         ok ->
             ok;
         {warning, _} ->

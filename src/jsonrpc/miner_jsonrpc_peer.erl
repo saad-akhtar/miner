@@ -45,10 +45,10 @@ handle_rpc(<<"peer_book">>, #{<<"addr">> := Addr}) ->
 handle_rpc(<<"peer_book">>, Params) ->
     ?jsonrpc_error({invalid_params, Params});
 handle_rpc(<<"peer_gossip_peers">>, []) ->
-    [ ?TO_VALUE(A) || A <- blockchain_swarm:gossip_peers() ];
+    [?TO_VALUE(A) || A <- blockchain_swarm:gossip_peers()];
 handle_rpc(<<"peer_gossip_peers">>, Params) ->
     ?jsonrpc_error({invalid_params, Params});
-handle_rpc(<<"peer_refresh">>, #{ <<"addr">> := Addr}) ->
+handle_rpc(<<"peer_refresh">>, #{<<"addr">> := Addr}) ->
     do_peer_refresh(Addr);
 handle_rpc(<<"peer_refresh">>, Params) ->
     ?jsonrpc_error({invalid_params, Params});
@@ -99,28 +99,50 @@ peer_book_response(Target) ->
     %% a single entry
     case Target of
         all ->
-            [ format_peer(P) || P <- libp2p_peerbook:values(Peerbook) ];
+            [format_peer(P) || P <- libp2p_peerbook:values(Peerbook)];
         self ->
             {ok, Peer} = libp2p_peerbook:get(Peerbook, blockchain_swarm:pubkey_bin()),
-            [ lists:foldl(fun(M, Acc) -> maps:merge(Acc, M) end,
-                        format_peer(Peer),
-                        [format_listen_addrs(TID, libp2p_peer:listen_addrs(Peer)),
-                         format_peer_sessions(TID)]
-                       ) ];
+            [
+                lists:foldl(
+                    fun(M, Acc) -> maps:merge(Acc, M) end,
+                    format_peer(Peer),
+                    [
+                        format_listen_addrs(TID, libp2p_peer:listen_addrs(Peer)),
+                        format_peer_sessions(TID)
+                    ]
+                )
+            ];
         Addrs when is_list(Addrs) ->
-            [begin
-                 {ok, P} = libp2p_peerbook:get(Peerbook, libp2p_crypto:p2p_to_pubkey_bin(binary_to_list(A))),
-                 lists:foldl(fun(M, Acc) -> maps:merge(Acc, M) end,
-                             format_peer(P),
-                             [format_listen_addrs(TID, libp2p_peer:listen_addrs(P)),
-                              format_peer_connections(P)])
-             end || A <- Addrs ];
+            [
+                begin
+                    {ok, P} = libp2p_peerbook:get(
+                        Peerbook, libp2p_crypto:p2p_to_pubkey_bin(binary_to_list(A))
+                    ),
+                    lists:foldl(
+                        fun(M, Acc) -> maps:merge(Acc, M) end,
+                        format_peer(P),
+                        [
+                            format_listen_addrs(TID, libp2p_peer:listen_addrs(P)),
+                            format_peer_connections(P)
+                        ]
+                    )
+                end
+             || A <- Addrs
+            ];
         Addr ->
-            {ok, P} = libp2p_peerbook:get(Peerbook, libp2p_crypto:p2p_to_pubkey_bin(binary_to_list(Addr))),
-            [ lists:foldl(fun(M, Acc) -> maps:merge(Acc, M) end,
-                          format_peer(P),
-                          [format_listen_addrs(TID, libp2p_peer:listen_addrs(P)),
-                          format_peer_connections(P)]) ]
+            {ok, P} = libp2p_peerbook:get(
+                Peerbook, libp2p_crypto:p2p_to_pubkey_bin(binary_to_list(Addr))
+            ),
+            [
+                lists:foldl(
+                    fun(M, Acc) -> maps:merge(Acc, M) end,
+                    format_peer(P),
+                    [
+                        format_listen_addrs(TID, libp2p_peer:listen_addrs(P)),
+                        format_peer_connections(P)
+                    ]
+                )
+            ]
     end.
 
 format_peer(Peer) ->
@@ -174,13 +196,15 @@ format_peer_sessions(Swarm) ->
         },
         maps:map(fun(_K, V) -> ?TO_VALUE(V) end, M)
     end,
-    #{ <<"sessions">> => [FormatEntry(E) || E <- Rs] }.
+    #{<<"sessions">> => [FormatEntry(E) || E <- Rs]}.
 
 do_peer_refresh(Addr) when is_list(Addr) ->
     TID = blockchain_swarm:tid(),
     Peerbook = libp2p_swarm:peerbook(TID),
-    [ #{ A => do_refresh(Peerbook, A) } ||
-      A <- Addr ];
+    [
+        #{A => do_refresh(Peerbook, A)}
+     || A <- Addr
+    ];
 do_peer_refresh(Addr) ->
     do_peer_refresh([Addr]).
 

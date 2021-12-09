@@ -7,13 +7,12 @@
 
 handle_rpc(<<"block_height">>, []) ->
     {ok, Height} = blockchain:height(blockchain_worker:blockchain()),
-    #{ height => Height };
+    #{height => Height};
 handle_rpc(<<"block_height">>, Params) ->
     ?jsonrpc_error({invalid_params, Params});
-
-handle_rpc(<<"block_get">>, #{ <<"height">> := Height }) when is_integer(Height) ->
+handle_rpc(<<"block_get">>, #{<<"height">> := Height}) when is_integer(Height) ->
     lookup_block(Height);
-handle_rpc(<<"block_get">>, #{ <<"hash">> := Hash }) when is_binary(Hash) ->
+handle_rpc(<<"block_get">>, #{<<"hash">> := Hash}) when is_binary(Hash) ->
     try
         BinHash = ?B64_TO_BIN(Hash),
         lookup_block(BinHash)
@@ -34,7 +33,6 @@ lookup_block(BlockId) ->
             blockchain_block:to_json(Block, []);
         {error, not_found} ->
             ?jsonrpc_error({not_found, "Block not found: ~p", [BlockId]});
-        {error, _}=Error ->
+        {error, _} = Error ->
             ?jsonrpc_error(Error)
     end.
-

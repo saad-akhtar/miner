@@ -16,7 +16,9 @@
 handle_rpc(<<"info_height">>, []) ->
     Chain = blockchain_worker:blockchain(),
     {ok, SyncHeight} = blockchain:sync_height(Chain),
-    {ok, #block_info_v2{height=Height, election_info={Epoch, _}}} = blockchain:head_block_info(Chain),
+    {ok, #block_info_v2{height = Height, election_info = {Epoch, _}}} = blockchain:head_block_info(
+        Chain
+    ),
     Output = #{
         epoch => Epoch,
         height => Height
@@ -32,18 +34,18 @@ handle_rpc(<<"info_name">>, []) ->
 handle_rpc(<<"info_block_age">>, []) ->
     #{block_age => miner:block_age()};
 handle_rpc(<<"info_p2p_status">>, []) ->
-        #{
-            "connected" := Connected,
-            "dialable" := Dialable,
-            "nat_type" := NatType,
-            "height" := Height
-        } = maps:from_list(miner:p2p_status()),
-        #{
-            connected => ?TO_VALUE(Connected),
-            dialable => ?TO_VALUE(Dialable),
-            nat_type => ?TO_VALUE(NatType),
-            height => ?TO_VALUE(list_to_integer(Height))
-        };
+    #{
+        "connected" := Connected,
+        "dialable" := Dialable,
+        "nat_type" := NatType,
+        "height" := Height
+    } = maps:from_list(miner:p2p_status()),
+    #{
+        connected => ?TO_VALUE(Connected),
+        dialable => ?TO_VALUE(Dialable),
+        nat_type => ?TO_VALUE(NatType),
+        height => ?TO_VALUE(list_to_integer(Height))
+    };
 handle_rpc(<<"info_region">>, []) ->
     R =
         case miner_lora:region() of
@@ -55,7 +57,6 @@ handle_rpc(<<"info_location">>, []) ->
     PubKey = blockchain_swarm:pubkey_bin(),
     Chain = blockchain_worker:blockchain(),
     get_gateway_location(Chain, PubKey, #{});
-
 %% TODO handle onboarding key data??
 handle_rpc(<<"info_summary">>, []) ->
     PubKey = blockchain_swarm:pubkey_bin(),
@@ -73,7 +74,9 @@ handle_rpc(<<"info_summary">>, []) ->
     {ok, SyncHeight} = blockchain:sync_height(Chain),
 
     %% get epoch and height
-    {ok, #block_info_v2{height=Height, election_info={Epoch, _}}} = blockchain:head_block_info(Chain),
+    {ok, #block_info_v2{height = Height, election_info = {Epoch, _}}} = blockchain:head_block_info(
+        Chain
+    ),
 
     %% get peerbook count
     Swarm = blockchain_swarm:swarm(),
@@ -111,8 +114,8 @@ get_firmware_version() ->
 get_miner_version() ->
     Releases = release_handler:which_releases(),
     case erlang:hd(Releases) of
-        {_,ReleaseVersion,_,_} -> ReleaseVersion;
-        {error,_} -> undefined
+        {_, ReleaseVersion, _, _} -> ReleaseVersion;
+        {error, _} -> undefined
     end.
 
 get_uptime() ->
@@ -128,7 +131,7 @@ get_gateway_info(Chain, PubKey) ->
                 blockchain_ledger_gateway_v2:owner_address(Gateway)
             ),
             GWMode = blockchain_ledger_gateway_v2:mode(Gateway),
-            get_gateway_location(Chain, Gateway, #{ 
+            get_gateway_location(Chain, Gateway, #{
                 <<"owner">> => ?TO_VALUE(GWOwnAddr),
                 <<"mode">> => ?TO_VALUE(GWMode)
             });
@@ -143,27 +146,29 @@ get_gateway_location(Chain, PubKey, Dest) when is_binary(PubKey) ->
         _ -> Dest
     end;
 get_gateway_location(_Chain, Gateway, Dest) ->
-    GWLoc = case blockchain_ledger_gateway_v2:location(Gateway) of
-        undefined -> undefined;
-        L -> h3:to_string(L)
-    end,
+    GWLoc =
+        case blockchain_ledger_gateway_v2:location(Gateway) of
+            undefined -> undefined;
+            L -> h3:to_string(L)
+        end,
     GWElevation = blockchain_ledger_gateway_v2:elevation(Gateway),
-    GWGain = case blockchain_ledger_gateway_v2:gain(Gateway) of
-        undefined -> undefined;
-        V -> V / 10
-    end,
-    Dest#{ 
+    GWGain =
+        case blockchain_ledger_gateway_v2:gain(Gateway) of
+            undefined -> undefined;
+            V -> V / 10
+        end,
+    Dest#{
         <<"location">> => ?TO_VALUE(GWLoc),
         <<"gain">> => ?TO_VALUE(GWGain),
         <<"elevation">> => ?TO_VALUE(GWElevation)
-     }.
+    }.
 
 format_macs_from_interfaces(IFs) ->
     lists:foldl(
         fun({IFName, Prop}, Acc) ->
             case proplists:get_value(hwaddr, Prop) of
                 undefined -> Acc;
-                HWAddr -> [ #{ ?TO_KEY(IFName) => ?TO_VALUE(format_hwaddr(HWAddr)) } | Acc]
+                HWAddr -> [#{?TO_KEY(IFName) => ?TO_VALUE(format_hwaddr(HWAddr))} | Acc]
             end
         end,
         [],

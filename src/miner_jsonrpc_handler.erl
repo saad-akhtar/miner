@@ -167,8 +167,10 @@ jsonrpc_error({error, E}) ->
 %% We are doing this _here_ so that the conversion
 %% is centralized and standardized and not copypasta'd
 %% into every single jsonrpc module
-format_params([]) -> [];
-format_params({Params}) -> format_params(kvc:to_proplist(Params));
+format_params([]) ->
+    [];
+format_params({Params}) ->
+    format_params(kvc:to_proplist(Params));
 format_params(Params) when is_list(Params) ->
     maps:from_list(Params);
 format_params(Params) when is_map(Params) andalso map_size(Params) == 0 -> [];
@@ -199,25 +201,34 @@ to_key(X) when is_list(X) -> iolist_to_binary(X);
 to_key(X) when is_binary(X) -> X.
 
 %% don't want these atoms stringified
-to_value(true) -> true;
-to_value(false) -> false;
-to_value(undefined) -> null;
+to_value(true) ->
+    true;
+to_value(false) ->
+    false;
+to_value(undefined) ->
+    null;
 %% lightly format floats, but pass through integers as-is
-to_value(X) when is_float(X) -> float_to_binary(blockchain_utils:normalize_float(X), [{decimals, 3}, compact]);
+to_value(X) when is_float(X) ->
+    float_to_binary(blockchain_utils:normalize_float(X), [{decimals, 3}, compact]);
 to_value(X) when is_integer(X) -> X;
 %% make sure we have valid representations of other types which may show up in values
 to_value(X) when is_list(X) -> iolist_to_binary(X);
 to_value(X) when is_atom(X) -> atom_to_binary(X, utf8);
 to_value(X) when is_binary(X) -> X;
 to_value(X) when is_map(X) -> ensure_binary_map(X);
-to_value(X) -> iolist_to_binary(io_lib:format("~p", [X])).
+to_value(X) ->
+    iolist_to_binary(io_lib:format("~p", [X])).
 
 ensure_binary_map(M) ->
-    maps:fold(fun(K, V, Acc) ->
-                      BinK = to_key(K),
-                      BinV = to_value(V),
-                      Acc#{BinK => BinV}
-              end, #{}, M).
+    maps:fold(
+        fun(K, V, Acc) ->
+            BinK = to_key(K),
+            BinV = to_value(V),
+            Acc#{BinK => BinV}
+        end,
+        #{},
+        M
+    ).
 
 jsonrpc_maybe(undefined) -> <<"undefined">>;
 jsonrpc_maybe(X) -> X.

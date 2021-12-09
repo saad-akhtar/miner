@@ -12,7 +12,9 @@ send_receipts(LatLongs, Challengees) ->
             Timestamp = Mega * 1000000 * 1000000 + Sec * 1000000 + Micro,
             case lists:keyfind(Address, 1, Challengees) of
                 {Address, LayerData} ->
-                    Receipt = blockchain_poc_receipt_v1:new(Address, Timestamp, 0, LayerData, radio),
+                    Receipt = blockchain_poc_receipt_v1:new(
+                        Address, Timestamp, 0, LayerData, radio
+                    ),
                     SignedReceipt = blockchain_poc_receipt_v1:sign(Receipt, SigFun),
                     miner_poc_statem:receipt(make_ref(), SignedReceipt, "/ip4/127.0.0.1/tcp/1234");
                 _ ->
@@ -28,24 +30,24 @@ poc_v11_vars() ->
     Regions = download_regions(RegionURLs),
     V0 = maps:put(regulatory_regions, ?regulatory_region_bin_str, maps:from_list(Regions)),
     V1 = #{
-           poc_version => 11,
-           %% XXX: 1.0 = no loss? because the mic_rcv_sig calculation multiplies this? unclear...
-           fspl_loss => 1.0,
-           %% NOTE: Set to 3 to attach tx_power to poc receipt
-           data_aggregation_version => 3,
-           region_us915_params => region_params_us915(),
-           region_eu868_params => region_params_eu868(),
-           region_au915_params => region_params_au915(),
-           region_as923_1_params => region_params_as923_1(),
-           region_as923_2_params => region_params_as923_2(),
-           region_as923_3_params => region_params_as923_3(),
-           region_as923_4_params => region_params_as923_4(),
-           region_ru864_params => region_params_ru864(),
-           region_cn470_params => region_params_cn470(),
-           region_in865_params => region_params_in865(),
-           region_kr920_params => region_params_kr920(),
-           region_eu433_params => region_params_eu433()
-          },
+        poc_version => 11,
+        %% XXX: 1.0 = no loss? because the mic_rcv_sig calculation multiplies this? unclear...
+        fspl_loss => 1.0,
+        %% NOTE: Set to 3 to attach tx_power to poc receipt
+        data_aggregation_version => 3,
+        region_us915_params => region_params_us915(),
+        region_eu868_params => region_params_eu868(),
+        region_au915_params => region_params_au915(),
+        region_as923_1_params => region_params_as923_1(),
+        region_as923_2_params => region_params_as923_2(),
+        region_as923_3_params => region_params_as923_3(),
+        region_as923_4_params => region_params_as923_4(),
+        region_ru864_params => region_params_ru864(),
+        region_cn470_params => region_params_cn470(),
+        region_in865_params => region_params_in865(),
+        region_kr920_params => region_params_kr920(),
+        region_eu433_params => region_params_eu433()
+    },
     maps:merge(V0, V1).
 
 region_urls() ->

@@ -56,7 +56,14 @@ init([PublicKey, SigFun, ECDHFun, ECCWorker]) ->
     SeedNodeDNS = application:get_env(blockchain, seed_node_dns, []),
     % look up the DNS record and add any resulting addresses to the SeedNodes
     % no need to do any checks here as any bad combination results in an empty list
-    SeedAddresses = string:tokens(lists:flatten([string:prefix(X, "blockchain-seed-nodes=") || [X] <- inet_res:lookup(SeedNodeDNS, in, txt), string:prefix(X, "blockchain-seed-nodes=") /= nomatch]), ","),
+    SeedAddresses = string:tokens(
+        lists:flatten([
+            string:prefix(X, "blockchain-seed-nodes=")
+         || [X] <- inet_res:lookup(SeedNodeDNS, in, txt),
+            string:prefix(X, "blockchain-seed-nodes=") /= nomatch
+        ]),
+        ","
+    ),
     Port = application:get_env(blockchain, port, 0),
     NumConsensusMembers = application:get_env(blockchain, num_consensus_members, 4),
     BaseDir = application:get_env(blockchain, base_dir, "data"),
@@ -85,11 +92,10 @@ init([PublicKey, SigFun, ECDHFun, ECCWorker]) ->
                 []
         end,
 
-
     ChildSpecs =
         ECCWorker ++
-        [
-         ?SUP(blockchain_sup, [BlockchainOpts])
-        ] ++
-        ConsensusMgr,
+            [
+                ?SUP(blockchain_sup, [BlockchainOpts])
+            ] ++
+            ConsensusMgr,
     {ok, {SupFlags, ChildSpecs}}.

@@ -70,16 +70,30 @@ handle_rpc(<<"hbbft_perf">>, []) ->
         current_height => CurrentHeight,
         blocks_since_epoch => BlocksSince,
         max_seen => MaxSeen,
-        consensus_members => [ format_hbbft_entry(Member, CurrentHeight,
-                                                  PostElectionHeight, BBATotals,
-                                                  SeenTotals, GroupWithPenalties) || Member <- ConsensusMembers ]
+        consensus_members => [
+            format_hbbft_entry(
+                Member,
+                CurrentHeight,
+                PostElectionHeight,
+                BBATotals,
+                SeenTotals,
+                GroupWithPenalties
+            )
+         || Member <- ConsensusMembers
+        ]
     };
 handle_rpc(_, _) ->
     ?jsonrpc_error(method_not_found).
 
 -spec format_hbbft_entry(<<>>, integer(), integer(), map(), map(), list()) -> map().
-format_hbbft_entry(CGMemberAddress, CurrentHeight, PostElectionHeight,
-                   BBATotals, SeenTotals, GroupWithPenalties) ->
+format_hbbft_entry(
+    CGMemberAddress,
+    CurrentHeight,
+    PostElectionHeight,
+    BBATotals,
+    SeenTotals,
+    GroupWithPenalties
+) ->
     {LastBBAHeight, Completions} = maps:get(CGMemberAddress, BBATotals),
     {LastSeenHeight, SeenVotes} = maps:get(CGMemberAddress, SeenTotals),
     {_Address, {Penalty, Tenure}} = lists:keyfind(CGMemberAddress, 1, GroupWithPenalties),
