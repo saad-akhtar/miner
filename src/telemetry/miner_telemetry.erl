@@ -7,7 +7,7 @@
 
 -export([init/1, handle_info/2, handle_call/3, handle_cast/2, terminate/2]).
 
--record(state, {logs = [], traces= [], timer = make_ref()}).
+-record(state, {logs = [], traces= [], timer = make_ref(), pubkey, sigfun}).
 
 
 log(Msg) ->
@@ -19,11 +19,12 @@ start_link() ->
 
 
 init([]) ->
-     ok = blockchain_event:add_handler(self()),
+    ok = blockchain_event:add_handler(self()),
     lager_app:start_handler(lager_event, miner_lager_telemetry_backend, [{level, none}]),
     Modules = [miner_hbbft_handler, libp2p_group_relcast_server, miner_consensus_mgr, miner_dkg_handler, miner],
     Traces = [lager:trace(miner_lager_telemetry_backend, [{module, Module}], debug) || Module <- Modules ],
-    {ok, #state{traces=Traces}}.
+    {ok, {PubKey, SigFun}} = miner:keys(),
+    {ok, #state{traces=Traces, pubkey = PubKey, sigfun = SigFun}}.
 
 handle_info({blockchain_event, {add_block, _Hash, _Sync, Ledger}}, State) ->
     %% cancel any timers from the previous block
@@ -35,7 +36,7 @@ handle_info({blockchain_event, {add_block, _Hash, _Sync, Ledger}}, State) ->
             Queue = miner:relcast_queue(consensus_group),
             StatusBin = list_to_binary(io_lib:format("~p", [Status])),
             QueueBin = list_to_binary(io_lib:format("~p", [Queue])),
-            send_telemetry(jsx:encode(#{height => Height, logs => lists:reverse(State#state.logs), status => StatusBin, queue => QueueBin})),
+            send_telemetry(jsx:encode(#{id => list_to_binary(libp2p_crypto:pubkey_to_b58(State#state.pubkey)), height => Height, logs => lists:reverse(State#state.logs), status => StatusBin, queue => QueueBin}), State#state.sigfun),
             %% pull telemetry again in 30s
             erlang:send_after(30000, self(), telemetry_timeout);
         false ->
@@ -48,7 +49,7 @@ handle_info(telemetry_timeout, State) ->
     Queue = miner:relcast_queue(consensus_group),
     StatusBin = list_to_binary(io_lib:format("~p", [Status])),
     QueueBin = list_to_binary(io_lib:format("~p", [Queue])),
-    send_telemetry(jsx:encode(#{height => Height, logs => lists:reverse(State#state.logs), status => StatusBin, queue => QueueBin})),
+    send_telemetry(jsx:encode(#{id => list_to_binary(libp2p_crypto:pubkey_to_b58(State#state.pubkey)), height => Height, logs => lists:reverse(State#state.logs), status => StatusBin, queue => QueueBin}), State#state.sigfun),
     %% pull telemetry again in 30s
     Timer = erlang:send_after(30000, self(), telemetry_timeout),
     {noreply, State#state{logs=[], timer=Timer}};
@@ -70,10 +71,11 @@ terminate(_Reason, State) ->
     [ lager:remove_trace(Trace) || Trace <- State#state.traces ],
     ok.
 
-send_telemetry(Json) ->
+send_telemetry(Json, SigFun) ->
     case application:get_env(miner, telemetry_url) of
         {ok, URL} ->
-            catch httpc:request(post, {URL, [], "application/json", Json}, [{timeout, 30000}], []);
+            Signature = SigFun(Json),
+            catch httpc:request(post, {URL, [{"X-Signature", base58:binary_to_base58(Signature)}], "application/json", Json}, [{timeout, 30000}], []);
         _ ->
             ok
     end.
