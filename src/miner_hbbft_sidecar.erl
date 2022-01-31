@@ -59,6 +59,14 @@ submit(Txn) ->
     lager:debug("submitting txn"),
     gen_server:call(?SERVER, {submit, Txn}, infinity).
 
+handle_txn(submit = RequestType, Txn) ->
+    lager:debug("handling txn with request type ~p", [RequestType]),
+    gen_server:call(?SERVER, {submit, Txn}, infinity).
+
+handle_txn(update = RequestType, Txn) ->
+    lager:debug("handling txn with request type ~p", [RequestType]),
+    gen_server:call(?SERVER, {query_txn, Txn}, infinity).
+
 set_group(Group) ->
     lager:debug("setting group to ~p", [Group]),
     gen_server:call(?SERVER, {set_group, Group}, infinity).
@@ -97,6 +105,10 @@ handle_call({set_group, Group}, _From, #state{group = OldGroup} = State) ->
         {P1, P2} when is_pid(P1) andalso is_pid(P2)  ->
             ok;
         {undefined, P} when is_pid(P) ->
+            ok = libp2p_swarm:add_stream_handler(blockchain_swarm:tid(), ?TX_PROTOCOL_V3,
+                {libp2p_framed_stream, server,
+                    [blockchain_txn_handler, ?TX_PROTOCOL_V3, self(),
+                        fun(ReqType, Txn) -> ?MODULE:handle_txn(ReqType, Txn) end]}),
             ok = libp2p_swarm:add_stream_handler(blockchain_swarm:tid(), ?TX_PROTOCOL_V2,
                                                  {libp2p_framed_stream, server,
                                                   [blockchain_txn_handler, ?TX_PROTOCOL_V2, self(),
@@ -146,9 +158,11 @@ handle_call({submit, Txn}, From,
                             case blockchain_txn:absorb(Txn, Chain) of
                                 ok ->
                                     spawn(fun() ->
-                                                catch libp2p_group_relcast:handle_command(Group, {txn, Txn})
-                                        end),
-                                    {reply, {ok, Height}, State};
+                                                  %% this will now return {ok, Position, Length}
+                                                  %% or {error, full} which we could feed back to the caller using gen_server:reply() on the From
+                                                catch {ok, _PosInQueue, _QueueLen, Height} = Res = libp2p_group_relcast:handle_command(Group, {txn, Txn}),
+                                                gen_server:reply(From, Res) end),
+                                    {noreply, State};
                                 Error ->
                                     lager:warning("speculative absorb failed for ~s, error: ~p", [blockchain_txn:print(Txn), Error]),
                                     {reply, {Error, Height}, State}
@@ -207,14 +221,15 @@ handle_info({Ref, {Res, Height}}, #state{validations = Validations, chain = Chai
             end,
             {noreply, State};
         #validation{from = From, pid = Pid, txn = Txn, monitor = MRef} ->
-            Result =
+
                 case Res of
                     ok ->
                         case blockchain_txn:absorb(Txn, Chain) of
                             ok ->
                                 %% avoid deadlock by not waiting for this.
                                 spawn(fun() ->
-                                              catch libp2p_group_relcast:handle_command(Group, {txn, Txn})
+                                            catch {ok, PosInQueue, QueueLen} = libp2p_group_relcast:handle_command(Group, {txn, Txn}),
+                                            gen_server:reply(From, {ok, PosInQueue, QueueLen, Height})
                                       end),
                                 ok;
                             Error ->
@@ -225,14 +240,15 @@ handle_info({Ref, {Res, Height}}, #state{validations = Validations, chain = Chai
                         erlang:exit(Pid, kill),
                         write_txn("timed out", Height, Txn),
                         lager:warning("validation timed out for ~s", [blockchain_txn:print(Txn)]),
-                        Error;
+                        gen_server:reply(From, {Error, Height}),
+                        ok;
                     {error, Error} ->
                         write_txn("failed", Height, Txn),
                         lager:warning("is_valid failed for ~s, error: ~p", [blockchain_txn:print(Txn), Error]),
-                        Error
+                        gen_server:reply(From, {Error, Height}),
+                        ok
                 end,
             erlang:demonitor(MRef, [flush]),
-            gen_server:reply(From, {Result, Height}),
             Validations1 = maps:remove(Ref, Validations),
             {noreply, maybe_start_validation(State#state{validations = Validations1})}
     end;
