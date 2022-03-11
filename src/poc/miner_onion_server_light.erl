@@ -17,10 +17,9 @@
 %% ------------------------------------------------------------------
 -export([
     start_link/1,
-    decrypt_p2p/1,
+    decrypt_grpc/2,
     decrypt_radio/7,
-    retry_decrypt/11,
-    send_receipt/11,
+    send_receipt/12,
     send_witness/9,
     region_params_update/2,
     region_params/0
@@ -72,15 +71,12 @@
 start_link(Args) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
 
--spec decrypt_p2p(binary()) -> ok.
-decrypt_p2p(Onion) ->
-    gen_server:cast(?MODULE, {decrypt_p2p, Onion}).
+-spec decrypt_grpc(binary(), miner_util:attestation()) -> ok.
+decrypt_grpc(Onion, Attestation) ->
+    gen_server:cast(?MODULE, {decrypt_grpc, Onion, Attestation}).
 
 decrypt_radio(Packet, RSSI, SNR, Timestamp, Freq, Channel, Spreading) ->
     gen_server:cast(?MODULE, {decrypt_radio, Packet, RSSI, SNR, Timestamp, Freq, Channel, Spreading}).
-
-retry_decrypt(Type, IV, OnionCompactKey, Tag, CipherText, RSSI, SNR, Frequency, Channel, DataRate, Stream) ->
-    gen_server:cast(?MODULE, {retry_decrypt, Type, IV, OnionCompactKey, Tag, CipherText, RSSI, SNR, Frequency, Channel, DataRate, Stream}).
 
 -spec region_params_update(atom(), [blockchain_region_param_v1:region_param_v1()]) -> ok.
 region_params_update(Region, RegionParams) ->
@@ -92,7 +88,7 @@ region_params() ->
 
 -spec send_receipt(Data :: binary(),
                    OnionCompactKey :: libp2p_crypto:pubkey_bin(),
-                   Type :: radio | p2p,
+                   Type :: radio | p2p | grpc,
                    Time :: pos_integer(),
                    RSSI :: integer(),
                    SNR :: float(),
@@ -100,8 +96,9 @@ region_params() ->
                    Channel :: non_neg_integer(),
                    DataRate :: binary(),
                    Power :: non_neg_integer(),
+                   Attestation :: miner_util:attestation(),
                    State :: state()) -> ok | {error, any()}.
-send_receipt(Data, OnionCompactKey, Type, Time, RSSI, SNR, Frequency, Channel, DataRate, Power, _State) ->
+send_receipt(Data, OnionCompactKey, Type, Time, RSSI, SNR, Frequency, Channel, DataRate, Power, Attestation, _State) ->
     case miner_lora_light:location_ok() of
         true ->
             lager:md([{poc_id, blockchain_utils:poc_id(OnionCompactKey)}]),
@@ -113,7 +110,7 @@ send_receipt(Data, OnionCompactKey, Type, Time, RSSI, SNR, Frequency, Channel, D
                            2 ->
                                blockchain_poc_receipt_v1:new(Address, Time, RSSI, Data, Type, SNR, Frequency, Channel, DataRate);
                            V when V >= 3 ->
-                               R0 = blockchain_poc_receipt_v1:new(Address, Time, RSSI, Data, Type, SNR, Frequency, Channel, DataRate),
+                               R0 = blockchain_poc_receipt_v1:new(Address, Time, RSSI, Data, Type, SNR, Frequency, Channel, DataRate, Attestation),
                                blockchain_poc_receipt_v1:tx_power(R0, Power);
                            _ ->
                                blockchain_poc_receipt_v1:new(Address, Time, RSSI, Data, Type)
@@ -181,16 +178,16 @@ handle_call(_Msg, _From, State) ->
 handle_cast({region_params_update, Region, RegionParams}, State) ->
     lager:info("updating region params. Region: ~p, Params: ~p", [Region, RegionParams]),
     {noreply, State#state{region = Region, region_params = RegionParams}};
-handle_cast({decrypt_p2p, _Payload}, #state{region_params = undefined} = State) ->
-    lager:warning("dropping p2p challenge packet as no region params data", []),
+handle_cast({decrypt_grpc, _Payload, _Attestation}, #state{region_params = undefined} = State) ->
+    lager:warning("dropping grpc challenge packet as no region params data", []),
     {noreply, State};
-handle_cast({decrypt_p2p, <<IV:2/binary,
+handle_cast({decrypt_grpc, <<IV:2/binary,
                             OnionCompactKey:33/binary,
                             Tag:4/binary,
-                            CipherText/binary>>}, State) ->
+                            CipherText/binary>>, Attestation}, State) ->
     %%TODO - rssi, freq, snr, channel and datarate were originally undefined
     %%       but this breaks the in use PB encoder, so defaulted to values below
-    NewState = decrypt(p2p, IV, OnionCompactKey, Tag, CipherText, 0, 0.0, 0.0, 0, [12], State),
+    NewState = decrypt(grpc, IV, OnionCompactKey, Tag, CipherText, 0, 0.0, 0.0, 0, [12], Attestation, State),
     {noreply, NewState};
 handle_cast({decrypt_radio, _Payload}, #state{region_params = undefined} = State) ->
     lager:warning("dropping radio challenge packet as no region params data", []),
@@ -200,13 +197,7 @@ handle_cast({decrypt_radio, <<IV:2/binary,
                               Tag:4/binary,
                               CipherText/binary>>,
              RSSI, SNR, _Timestamp, Frequency, Channel, DataRate}, State) ->
-    NewState = decrypt(radio, IV, OnionCompactKey, Tag, CipherText, RSSI, SNR, Frequency, Channel, DataRate, State),
-    {noreply, NewState};
-handle_cast({retry_decrypt, Type, _IV, _OnionCompactKey, _Tag, _CipherText, _RSSI, _SNR, _Frequency, _Channel, _DataRate}, #state{region_params = undefined} = State) ->
-    lager:warning("dropping retry ~p challenge packet as no region params data", [Type]),
-    {noreply, State};
-handle_cast({retry_decrypt, Type, IV, OnionCompactKey, Tag, CipherText, RSSI, SNR, Frequency, Channel, DataRate}, State) ->
-    NewState = decrypt(Type, IV, OnionCompactKey, Tag, CipherText, RSSI, SNR, Frequency, Channel, DataRate, State),
+    NewState = decrypt(radio, IV, OnionCompactKey, Tag, CipherText, RSSI, SNR, Frequency, Channel, DataRate, undefined, State),
     {noreply, NewState};
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -218,7 +209,9 @@ handle_info(_Msg, State) ->
 %% ------------------------------------------------------------------
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
-decrypt(Type, IV, OnionCompactKey, Tag, CipherText, RSSI, SNR, Frequency, Channel, DataRate, #state{ecdh_fun=ECDHFun, region_params = RegionParams, region = Region}=State) ->
+decrypt(Type, IV, OnionCompactKey, Tag, CipherText, RSSI, SNR, Frequency, Channel,
+    DataRate, Attestation,
+    #state{ecdh_fun=ECDHFun, region_params = RegionParams, region = Region} = State) ->
     POCID = blockchain_utils:poc_id(OnionCompactKey),
     OnionKeyHash = crypto:hash(sha256, OnionCompactKey),
     lager:info("attempting decrypt of type ~p for onion key hash ~p", [Type, OnionKeyHash]),
@@ -283,14 +276,14 @@ decrypt(Type, IV, OnionCompactKey, Tag, CipherText, RSSI, SNR, Frequency, Channe
                                                         ok ->
                                                             lager:info("sending receipt with observed power: ~p with radio power ~p", [EffectiveTxPower, TxPower]),
                                                             ?MODULE:send_receipt(Data, OnionCompactKey, Type, os:system_time(nanosecond),
-                                                                                 RSSI, SNR, Frequency, Channel, DataRate, EffectiveTxPower, State);
+                                                                                 RSSI, SNR, Frequency, Channel, DataRate, EffectiveTxPower, Attestation, State);
                                                         {warning, {tx_power_corrected, CorrectedPower}} ->
                                                             %% Corrected power never takes into account antenna gain config in pkt forwarder so we
                                                             %% always add it back here
                                                             lager:warning("tx_power_corrected! original_power: ~p, corrected_power: ~p, with gain ~p; sending receipt with power ~p",
                                                                           [TxPower, CorrectedPower, AssertedGain, CorrectedPower + AssertedGain]),
                                                             ?MODULE:send_receipt(Data, OnionCompactKey, Type, os:system_time(nanosecond),
-                                                                                 RSSI, SNR, Frequency, Channel, DataRate, CorrectedPower + AssertedGain, State);
+                                                                                 RSSI, SNR, Frequency, Channel, DataRate, CorrectedPower + AssertedGain, Attestation, State);
                                                         {warning, {unknown, Other}} ->
                                                             %% This should not happen
                                                             lager:warning("What is this? ~p", [Other]),

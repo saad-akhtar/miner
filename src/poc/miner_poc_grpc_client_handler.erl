@@ -4,6 +4,7 @@
 -module(miner_poc_grpc_client_handler).
 
 -include("src/grpc/autogen/client/gateway_miner_client_pb.hrl").
+-include_lib("helium_proto/include/blockchain_poc_core_v1_pb.hrl").
 
 %% ------------------------------------------------------------------
 %% Stream Exports
@@ -128,8 +129,8 @@ handle_msg({data, #gateway_resp_v1_pb{msg = {poc_challenge_resp, ChallengeNotifi
             TargetRes = miner_poc_grpc_client_statem:check_target(binary_to_list(URI), PubKeyBin, OnionKeyHash, BlockHash, NotificationHeight, ChallengerSig),
             lager:info("check target result for key ~p: ~p",[OnionKeyHash, TargetRes]),
             case TargetRes of
-                {ok, Result, _Details} ->
-                    handle_check_target_resp(Result);
+                {ok, Result, Attestation} ->
+                    handle_check_target_resp(Result, Attestation);
                 {error, <<"queued_poc">>} ->
                     erlang:send_after(5000, Self, {retry_check_target, 1, Msg});
                 {error, _Reason, _Details} ->
@@ -165,8 +166,8 @@ handle_info({retry_check_target, Attempt, Msg}, StreamState)  when Attempt =< 3 
             TargetRes = miner_poc_grpc_client_statem:check_target(binary_to_list(URI), PubKeyBin, OnionKeyHash, BlockHash, NotificationHeight, ChallengerSig),
             lager:info("check target result retry ~p for key ~p: ~p",[Attempt, OnionKeyHash, TargetRes]),
             case TargetRes of
-                {ok, Result, _Details} ->
-                    handle_check_target_resp(Result);
+                {ok, Result, Attestation} ->
+                    handle_check_target_resp(Result, Attestation);
                 {error, <<"queued_poc">>} ->
                     erlang:send_after(5000, Self, {retry_check_target, Attempt +1, Msg});
                 {error, _Reason, _Details} ->
@@ -184,10 +185,10 @@ handle_info(_Msg, StreamState) ->
 %% ------------------------------------------------------------------
 %% Internal functions
 %% ------------------------------------------------------------------
--spec handle_check_target_resp(#gateway_poc_check_challenge_target_resp_v1_pb{})-> ok.
-handle_check_target_resp(#gateway_poc_check_challenge_target_resp_v1_pb{target = true, onion = Onion} = _ChallengeResp) ->
-    ok = miner_onion_server_light:decrypt_p2p(Onion);
-handle_check_target_resp(#gateway_poc_check_challenge_target_resp_v1_pb{target = false} = _ChallengeResp) ->
+-spec handle_check_target_resp(#gateway_poc_check_challenge_target_resp_v1_pb{}, miner_util:attestation())-> ok.
+handle_check_target_resp(#gateway_poc_check_challenge_target_resp_v1_pb{target = true, onion = Onion} = _ChallengeResp, Attestation) ->
+    ok = miner_onion_server_light:decrypt_grpc(Onion, Attestation);
+handle_check_target_resp(#gateway_poc_check_challenge_target_resp_v1_pb{target = false} = _ChallengeResp, _Attestation) ->
     ok.
 
 -ifdef(TEST).

@@ -18,11 +18,18 @@
          true_predicate/1,
          has_valid_local_capability/2,
          hbbft_perf/0,
-         mk_rescue_block/3
+         mk_rescue_block/3,
+         get_attestation/1
         ]).
 
+-include("src/grpc/autogen/client/gateway_miner_client_pb.hrl").
+-include_lib("helium_proto/include/blockchain_poc_core_v1_pb.hrl").
 -include_lib("blockchain/include/blockchain_vars.hrl").
 -include_lib("blockchain/include/blockchain.hrl").
+
+
+-type attestation() :: #attestation_pb{}.
+-export_type([attestation/0]).
 
 %% get the firmware release data from a hotspot
 -define(LSB_FILE, "/etc/lsb_release").
@@ -270,3 +277,19 @@ mk_rescue_block(Vars, Addrs, KeyStr) ->
     RescueSig = RescueSigFun(EncodedBlock),
 
     blockchain_block_v1:set_signatures(RescueBlock, [], RescueSig).
+
+-spec get_attestation(#gateway_resp_v1_pb{}) -> attestation().
+get_attestation(Msg) ->
+    #gateway_resp_v1_pb{
+        address = AttAddress,
+        height = AttHeight,
+        block_time = AttBlockTime,
+        block_age = AttBlockAge,
+        signature = AttSig}  = Msg,
+    #attestation_pb{
+        height = AttHeight,
+        block_time = AttBlockTime,
+        block_age = AttBlockAge,
+        address = AttAddress,
+        signature = AttSig
+    }.

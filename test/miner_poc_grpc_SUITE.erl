@@ -147,8 +147,6 @@ exec_dist_test(_TestCase, Config, VarMap, Status) ->
             %% Check that the receipts are growing
             case maps:get(?poc_version, VarMap, 11) of
                 V when V >= 10 ->
-                    %% There are no paths in v11 or v10 for that matter, so we'll consolidate
-                    %% the checks for both poc-v10 and poc-v11 here
                     true = miner_ct_utils:wait_until(
                              fun() ->
                                      %% Check if we have some receipts
