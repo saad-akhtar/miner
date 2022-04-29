@@ -148,7 +148,8 @@ init(_Opts) ->
                 []
         end,
 
-    Telemetry = case application:get_env(miner, telemetry, false) of
+    Telemetry = case blockchain_utils:get_boolean_os_env_var("SEND_MINER_TELEMETRY", false)
+                     or application:get_env(miner, telemetry, false) of
                     true -> [?WORKER(miner_telemetry, [])];
                     _ -> []
                 end,
@@ -165,7 +166,7 @@ init(_Opts) ->
          ] ++
         POCServers ++
         ValServers ++
-        EbusServer,
+        EbusServer ++
         Telemetry,
     {ok, {SupFlags, ChildSpecs}}.
 

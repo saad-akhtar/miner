@@ -29,17 +29,25 @@
 
 -behaviour(gen_event).
 
--export([init/1, handle_call/2, handle_event/2, handle_info/2, terminate/2,
-        code_change/3]).
+-export([
+    init/1,
+    handle_call/2,
+    handle_event/2,
+    handle_info/2,
+    terminate/2,
+    code_change/3
+]).
 
--record(state, {level :: {'mask', integer()},
-                id :: atom() | {atom(), any()},
-                formatter :: atom(),
-                format_config :: any()}).
+-record(state, {
+    level :: {'mask', integer()},
+    id :: atom() | {atom(), any()},
+    formatter :: atom(),
+    format_config :: any()
+}).
 
 -include_lib("lager/include/lager.hrl").
 
--define(TERSE_FORMAT,[time, " ", "[", severity,"] ", message]).
+-define(TERSE_FORMAT, [time, " ", "[", severity, "] ", message]).
 -define(DEFAULT_FORMAT_CONFIG, ?TERSE_FORMAT).
 
 %% @private
@@ -49,16 +57,20 @@ init(Options) when is_list(Options) ->
     Level = get_option(level, Options, undefined),
     try lager_util:config_to_mask(Level) of
         L ->
-            [ID, Formatter, Config] = [ get_option(K, Options, Default) || {K, Default} <- [
-                                                                                            {id, ?MODULE},
-                                                                                            {formatter, lager_default_formatter},
-                                                                                            {formatter_config, ?DEFAULT_FORMAT_CONFIG}
-                                                                                           ]
-                                      ],
-            {ok, #state{level=L,
-                    id=ID,
-                    formatter=Formatter,
-                    format_config=Config}}
+            [ID, Formatter, Config] = [
+                get_option(K, Options, Default)
+             || {K, Default} <- [
+                    {id, ?MODULE},
+                    {formatter, lager_default_formatter},
+                    {formatter_config, ?DEFAULT_FORMAT_CONFIG}
+                ]
+            ],
+            {ok, #state{
+                level = L,
+                id = ID,
+                formatter = Formatter,
+                format_config = Config
+            }}
     catch
         _:_ ->
             {error, {fatal, bad_log_level}}
@@ -66,42 +78,43 @@ init(Options) when is_list(Options) ->
 init(Other) ->
     {error, {fatal, {bad_telemetry_config, Other}}}.
 
-validate_options([]) -> true;
-validate_options([{level, L}|T]) when is_atom(L) ->
+validate_options([]) ->
+    true;
+validate_options([{level, L} | T]) when is_atom(L) ->
     case lists:member(L, ?LEVELS) of
         false ->
             throw({error, {fatal, {bad_level, L}}});
         true ->
             validate_options(T)
     end;
-validate_options([{use_stderr, true}|T]) ->
+validate_options([{use_stderr, true} | T]) ->
     validate_options(T);
-validate_options([{use_stderr, false}|T]) ->
+validate_options([{use_stderr, false} | T]) ->
     validate_options(T);
-validate_options([{formatter, M}|T]) when is_atom(M) ->
+validate_options([{formatter, M} | T]) when is_atom(M) ->
     validate_options(T);
-validate_options([{formatter_config, C}|T]) when is_list(C) ->
+validate_options([{formatter_config, C} | T]) when is_list(C) ->
     validate_options(T);
-validate_options([{group_leader, L}|T]) when is_pid(L) ->
+validate_options([{group_leader, L} | T]) when is_pid(L) ->
     validate_options(T);
-validate_options([{id, {?MODULE, _}}|T]) ->
+validate_options([{id, {?MODULE, _}} | T]) ->
     validate_options(T);
-validate_options([H|_]) ->
+validate_options([H | _]) ->
     throw({error, {fatal, {bad_telemetry_config, H}}}).
 
 get_option(K, Options, Default) ->
-   case lists:keyfind(K, 1, Options) of
-       {K, V} -> V;
-       false -> Default
-   end.
+    case lists:keyfind(K, 1, Options) of
+        {K, V} -> V;
+        false -> Default
+    end.
 
 %% @private
-handle_call(get_loglevel, #state{level=Level} = State) ->
+handle_call(get_loglevel, #state{level = Level} = State) ->
     {ok, Level, State};
 handle_call({set_loglevel, Level}, State) ->
     try lager_util:config_to_mask(Level) of
         Levels ->
-            {ok, ok, State#state{level=Levels}}
+            {ok, ok, State#state{level = Levels}}
     catch
         _:_ ->
             {ok, {error, bad_log_level}, State}
@@ -110,11 +123,15 @@ handle_call(_Request, State) ->
     {ok, ok, State}.
 
 %% @private
-handle_event({log, Message},
-    #state{level=L,formatter=Formatter,format_config=FormatConfig,id=ID} = State) ->
+handle_event(
+    {log, Message},
+    #state{level = L, formatter = Formatter, format_config = FormatConfig, id = ID} = State
+) ->
     case lager_util:is_loggable(Message, L, ID) of
         true ->
-            miner_telemetry:log(list_to_binary(Formatter:format(Message,FormatConfig,[]))),
+            miner_telemetry:log(
+              lager_msg:metadata(Message),
+              iolist_to_binary(Formatter:format(Message, FormatConfig, []))),
             {ok, State};
         false ->
             {ok, State}
@@ -127,7 +144,7 @@ handle_info(_Info, State) ->
     {ok, State}.
 
 %% @private
-terminate(remove_handler, _State=#state{id=ID}) ->
+terminate(remove_handler, _State = #state{id = ID}) ->
     %% have to do this asynchronously because we're in the event handlr
     spawn(fun() -> lager:clear_trace_by_destination(ID) end),
     ok;
