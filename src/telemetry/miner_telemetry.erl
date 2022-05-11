@@ -8,15 +8,17 @@
 
 %% defines how frequently we send telemetry when a node is in consensus (seconds)
 -define(CONSENSUS_TELEMETRY_INTERVAL, 30 * 1000).
+-define(TELEMETRY_SEND_INTERVAL, 100). %% blocks
 
 -record(state, {
-    logs = [],
-    traces = [],
-    counts = #{},
-    timer = make_ref(),
-    sample_rate,
-    pubkey,
-    sigfun
+    logs = [] :: [ binary() ],
+    traces = [] :: [ atom() ],
+    counts = #{} :: map(),
+    timer = make_ref() :: reference(),
+    last_sent_height = 0 :: non_neg_integer(),
+    sample_rate :: float(),
+    pubkey :: binary(),
+    sigfun :: function()
 }).
 
 log(Metadata, Msg) ->
@@ -58,8 +60,9 @@ handle_info({blockchain_event, {add_block, _Hash, _Sync, Ledger}}, State) ->
         logs => lists:reverse(State#state.logs),
         counts => State#state.counts
     },
+    InConsensus = miner_consensus_mgr:in_consensus(),
     {Timer, NewData} =
-        case miner_consensus_mgr:in_consensus() of
+        case InConsensus of
             true ->
                 Status = miner:hbbft_status(),
                 Queue = miner:relcast_queue(consensus_group),
@@ -70,19 +73,19 @@ handle_info({blockchain_event, {add_block, _Hash, _Sync, Ledger}}, State) ->
                         status => Status,
                         queue => format_hbbft_queue(Queue)
                     }
-                }};
+                }, true};
             false ->
-                {make_ref(), Data0}
+                {make_ref(), Data0, false}
         end,
-    send_telemetry(jsx:encode(NewData), State#state.sigfun),
-    {noreply, State#state{logs = [], counts = #{}, timer = Timer}};
+    NewState = maybe_send_telemetry(NewData, InConsensus, Height, State),
+    {noreply, NewState#state{timer = Timer}};
 handle_info(telemetry_timeout, State) ->
     {ok, Height} = blockchain_ledger_v1:current_height(blockchain:ledger()),
     Id = State#state.pubkey,
     Status = miner:hbbft_status(),
     Queue = miner:relcast_queue(consensus_group),
-    send_telemetry(
-        jsx:encode(#{
+    NewState = maybe_send_telemetry(
+        #{
             id => ?BIN_TO_B58(Id),
             name => ?BIN_TO_ANIMAL(Id),
             height => Height,
@@ -92,12 +95,14 @@ handle_info(telemetry_timeout, State) ->
                 status => Status,
                 queue => format_hbbft_queue(Queue)
             }
-        }),
-        State#state.sigfun
+        },
+        true,
+        Height,
+        State
     ),
     %% pull telemetry again in 30s
     Timer = erlang:send_after(30000, self(), telemetry_timeout),
-    {noreply, State#state{logs = [], counts = #{}, timer = Timer}};
+    {noreply, NewState#state{timer = Timer}};
 handle_info(Msg, State) ->
     lager:info("unhandled info ~p", [Msg]),
     {noreply, State}.
@@ -116,7 +121,7 @@ handle_cast({log, Metadata, Msg}, State = #state{sample_rate = R, counts = C, lo
         end,
     Severity = get_metadata(severity, Metadata),
     Module = get_metadata(module, Metadata),
-    {Line, _Col} = get_metadata(line, Metadata, {0, 0}),
+    {_Col, Line} = get_metadata(line, Metadata, {0, 0}),
 
     %% We want to end up with a data structure that looks like
     %% #{ Module => #{ Severity => #{ LineNum => Count } } }
@@ -151,24 +156,31 @@ terminate(_Reason, State) ->
     [lager:remove_trace(Trace) || Trace <- State#state.traces],
     ok.
 
-send_telemetry(Json, SigFun) ->
-    Compressed = zlib:gzip(Json),
+maybe_send_telemetry(Json, true, Height, #state{sigfun = SigFun} = State) ->
     case application:get_env(miner, telemetry_url) of
         {ok, URL} ->
+            Compressed = zlib:gzip(jsx:encode(Json)),
             Signature = SigFun(Compressed),
-            catch httpc:request(
-                post,
-                {URL,
-                    [
-                        {"X-Telemetry-Signature", ?BIN_TO_B58(Signature)},
-                        {"Content-Encoding", "gzip"}
-                    ],
-                    "application/json", Compressed},
-                [{timeout, 30000}],
-                []
-            );
+            send_telemetry(Compressed, Signature, URL),
+            State#state{logs = [], counts = #{}, last_sent_height=Height};
         _ ->
-            ok
+            State#state{logs = [], counts = #{}, last_sent_height=Height}
+    end;
+maybe_send_telemetry(Json, false, Height,
+                     #state{last_sent_height=Last, sigfun=SigFun} = State) ->
+    case application:get_env(miner, telemetry_url) of
+        {ok, URL} ->
+            case (Height - Last) >= ?TELEMETRY_SEND_INTERVAL andalso
+                 rand:uniform() >= 0.50 of
+                true ->
+                    Compressed = zlib:gzip(jsx:encode(Json)),
+                    Signature = SigFun(Compressed),
+                    send_telemetry(Compressed, Signature, URL),
+                    State#state{logs = [], counts = #{}, last_sent_height=Height};
+                false ->
+                    State
+            end;
+        _ -> State
     end.
 
 get_metadata(Key, M) ->
@@ -179,6 +191,19 @@ get_metadata(Key, M, Default) ->
         {Key, Value} -> Value;
         false -> Default
     end.
+
+send_telemetry(Data, Signature, URL) ->
+    catch httpc:request(
+            post,
+            {URL,
+                    [
+                        {"X-Telemetry-Signature", ?BIN_TO_B58(Signature)},
+                        {"Content-Encoding", "gzip"}
+                    ],
+                    "application/json", Data},
+                [{timeout, 30000}],
+                []
+           ).
 
 %% copy-pasta'd from miner_jsonrpc_hbbft
 format_hbbft_queue(Queue) ->
